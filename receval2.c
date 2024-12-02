@@ -32,7 +32,10 @@ typedef u32 Ident;
 enum VarLocation { GLOBAL, LOCAL, ARGUMENT };
 
 /* -- TYPES -- */
-typedef enum { TYPE_INT, TYPE_FN_PTR } TypeClass;
+typedef enum {
+    TYPE_INT,
+    TYPE_FN_PTR,
+} TypeClass;
 
 typedef struct Type {
     TypeClass class;
@@ -70,6 +73,8 @@ typedef enum {
     OP_CALL,
     OP_VAR,
     OP_ASSIGN,
+    OP_UNARY,
+    OP_BINARY,
 } ExprClass;
 
 typedef struct {
@@ -91,7 +96,6 @@ typedef struct {
     u32 * arg_typesb;
     u32 argsb;
 } OpCall;
-
 
 static u32 sof_type[] = {
     [TYPE_INT] = sof(Integer),
@@ -369,16 +373,19 @@ void parse_global_def(Token ** tokens, Def ** global_defs, u32 * globals_len, u3
     Type * type_int = malloc(sof(Type));
     *type_int = (Type) { TYPE_INT };
     
+    Token * init_token;
     token++;
     if (token->class == TK_FUNCTION) {
         type = (Type) {
             TYPE_FN_PTR, .ret_type = type_int
         };
         token++;
+        init_token = token;
         skip_to_end(&token, TK_OPEN, TK_CLOSE);
         skip_to_end(&token, TK_BEGIN, TK_END);
     } else if (token->class == TK_INT) {
         type = (Type) { TYPE_INT };
+        init_token = token;
         token++;
     } else PANIC();
     
@@ -396,7 +403,7 @@ void parse_global_def(Token ** tokens, Def ** global_defs, u32 * globals_len, u3
         .name = var_name,
         .offset = *globalsb,
         .type = type,
-        .init = &(*tokens)[3]
+        .init = init_token
     };
     (*globals_len)++;
     *globalsb += sof_type[type.class];
@@ -505,31 +512,36 @@ int eval_main(Function * fn, void * globals) {
     return ret;
 }
 
-
 int main() {
     Token *code = (Token[]) {
-        (Token) { TK_ASSIGN },
-        (Token) { TK_IDENT, "function1" },
-        (Token) { TK_FUNCTION },
-        (Token) { TK_OPEN },
-            (Token) { TK_IDENT, "int" },
-            (Token) { TK_IDENT, "x" },
-        (Token) { TK_CLOSE },
-        (Token) { TK_BEGIN },
-            (Token) { TK_IDENT, "x" },
-        (Token) { TK_END },
-        (Token) { TK_ASSIGN },
+        (Token) { TK_ASSIGN, NULL },
         (Token) { TK_IDENT, "main" },
-        (Token) { TK_FUNCTION },
-        (Token) { TK_OPEN },
-        (Token) { TK_CLOSE },
-        (Token) { TK_BEGIN },
-            (Token) { TK_IDENT, "function1" },
-            (Token) { TK_OPEN },
-                (Token) { TK_INT, "525" },
-            (Token) { TK_CLOSE },
-        (Token) { TK_END },
-        (Token) { TK_EOF }
+            (Token) { TK_FUNCTION, NULL },
+            (Token) { TK_OPEN, NULL },
+            (Token) { TK_CLOSE, NULL },
+            (Token) { TK_BEGIN, NULL },
+                (Token) { TK_IDENT, "function1" },
+                (Token) { TK_OPEN, NULL },
+                    (Token) { TK_INT, "525" },
+                (Token) { TK_CLOSE, NULL },
+            (Token) { TK_END, NULL },
+
+        (Token) { TK_ASSIGN, NULL },
+        (Token) { TK_IDENT, "function1" },
+            (Token) { TK_FUNCTION, NULL },
+            (Token) { TK_OPEN, NULL },
+                (Token) { TK_IDENT, "int" },
+                (Token) { TK_IDENT, "x" },
+            (Token) { TK_CLOSE, NULL },
+            (Token) { TK_BEGIN, NULL },
+                (Token) { TK_IDENT, "global_variable_A" },
+            (Token) { TK_END, NULL },
+        (Token) { TK_ASSIGN, NULL },
+
+        (Token) { TK_IDENT, "global_variable_A" },
+            (Token) { TK_INT, "35" },
+
+        (Token) { TK_EOF, NULL }
     };
 
     void * globals;
@@ -537,80 +549,4 @@ int main() {
     parse_tokens(&code, &globals, &main_fn);
     int ret = eval_main(main_fn, globals);
     printf("%d\n",ret);
-    /*
-
-#define DEF(NAME, CTYPE, TYPE, VAL) do {       \
-    ASSERT(globalsb < (globals_cap * 8));      \
-    ASSERT(sof(CTYPE) == sof_type[TYPE.class]);\
-    *(CTYPE *)(globals + globalsb) = VAL;      \
-    global_defs[globals_len].name = NAME;      \
-    global_defs[globals_len].type = TYPE;      \
-    global_defs[globals_len].offset = globalsb;\
-    globals_len ++;                            \
-    globalsb += sof(CTYPE);                    \
-} while(0)
-
-    u32 globals_cap = 20, globals_len = 0, globalsb = 0;
-
-    Def * global_defs = malloc(sof(Def) * globals_cap);    
-    void * globals = malloc(globals_cap * 8);
-    
-
-    static Type type_int = (Type) { .class = TYPE_INT };
-
-    static Type fn_int = (Type) {
-        .class = TYPE_FN_PTR,
-        .ret_type = &type_int
-    };
-
-    Function fn1;
-    Function fn_main;
-
-    DEF("fn1", Function *, fn_int, &fn1);
-    DEF("y", Integer, type_int, 445);
- 
-    {
-        u32 args_len;
-        Def * arg_defs;
-        Token * code;
-
-        parse_function_def(
-            (Token[]) {
-                (Token) { TK_OPEN, NULL },
-                    (Token) { TK_IDENT, "int" },
-                    (Token) { TK_IDENT, "x" },
-                (Token) { TK_CLOSE, NULL },
-
-                (Token) { TK_BEGIN, NULL },
-                    (Token) { TK_IDENT, "x" },
-                (Token) { TK_END, NULL }
-            },
-            &arg_defs, &args_len,
-            &code, NULL
-        );
-
-        fn1 = parse_function_code(code, global_defs, globals_len, arg_defs, args_len, NULL);
-        
-        parse_function_def(
-            (Token[]) {
-                (Token) { TK_OPEN, NULL },
-                (Token) { TK_CLOSE, NULL },
-
-                (Token) { TK_BEGIN, NULL },
-                    (Token) { TK_IDENT, "fn1" },
-                    (Token) { TK_OPEN, NULL },
-                        (Token) { TK_INT, "478" },
-                    (Token) { TK_CLOSE, NULL },
-                (Token) { TK_END, NULL }
-            },
-            &arg_defs, &args_len,
-            &code, NULL
-        );
-
-        fn_main = parse_function_code(code, global_defs, globals_len, arg_defs, args_len, NULL);
-    }
-
-    int ret = eval_main(&fn_main, globals);
-    printf("%d\n",ret);
-    */
 }
