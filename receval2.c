@@ -370,15 +370,18 @@ void parse_global_def(Token ** tokens, Def ** global_defs, u32 * globals_len, u3
     char * var_name = token->value;
 
     Type type;
-    Type * type_int = malloc(sof(Type));
-    *type_int = (Type) { TYPE_INT };
     
     Token * init_token;
     token++;
     if (token->class == TK_FUNCTION) {
         type = (Type) {
-            TYPE_FN_PTR, .ret_type = type_int
+            .class = TYPE_FN_PTR,
+            .ret_type = malloc(sof(Type))
         };
+        token++;
+        ASSERT(token->class == TK_IDENT);
+        *(type.ret_type) = str_to_type(token->value);
+
         token++;
         init_token = token;
         skip_to_end(&token, TK_OPEN, TK_CLOSE);
@@ -517,6 +520,7 @@ int main() {
         (Token) { TK_ASSIGN, NULL },
         (Token) { TK_IDENT, "main" },
             (Token) { TK_FUNCTION, NULL },
+            (Token) { TK_IDENT, "int" },
             (Token) { TK_OPEN, NULL },
             (Token) { TK_CLOSE, NULL },
             (Token) { TK_BEGIN, NULL },
@@ -529,6 +533,7 @@ int main() {
         (Token) { TK_ASSIGN, NULL },
         (Token) { TK_IDENT, "function1" },
             (Token) { TK_FUNCTION, NULL },
+            (Token) { TK_IDENT, "int" },
             (Token) { TK_OPEN, NULL },
                 (Token) { TK_IDENT, "int" },
                 (Token) { TK_IDENT, "x" },
