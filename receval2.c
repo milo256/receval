@@ -3,104 +3,14 @@
 #include<stdbool.h>
 #include<string.h>
 
-#define ASSERT(A) do{ if (!(A)) {                                                      \
-    fprintf(stderr, "Assertion failed on %s:%d: %s = %d\n", __FILE__, __LINE__, #A, A);\
-    exit(1);                                                                           \
-}} while(0)
+#include "types.h"
+#include "macros.h"
+#include "builtin.h"
 
-#define PANIC() do {                                                     \
-    fprintf(stderr, "Panic! %s:%d\n", __FILE__, __LINE__); \
-    exit(-1);                                                            \
-} while(0)
-
-#define PTR(TYPE, VAL) ((TYPE[]){(TYPE) VAL})
 
 /* my z key is broken. sof = sizeof and b at the end of a
  * variable name means it's a size in (b)ytes */
-#define sof sizeof 
-
-#define ARRLEN(A) (sof(A)/sof(A[0]))
-
-typedef unsigned int u32;
-typedef int i32;
-
-typedef unsigned char u8;
-
-typedef i32 Integer;
-typedef u32 Ident;
-
-enum VarLocation { GLOBAL, LOCAL, ARGUMENT };
-
-/* -- TYPES -- */
-typedef enum {
-    TYPE_INT,
-    TYPE_FN_PTR,
-} TypeClass;
-
-typedef struct Type {
-    TypeClass class;
-    union { struct Type * ret_type; };
-} Type;
-
-/* we don't need ident because ident is just offset + location,
- * and location is which array the def is stored in */
-typedef struct {
-    char * name;
-    Type type;
-    u32 offset;
-    void * init; /* location of the initialiser in code. only used for static
-                   * variables since they're initialised prior to code execution. */
-} Def;
-
-/* -- TOKENS -- */
-typedef enum {
-    TK_INT,
-    TK_FUNCTION,
-    TK_IDENT,
-    TK_ASSIGN,
-    TK_OPEN,
-    TK_CLOSE,
-    TK_BEGIN,
-    TK_END,
-    TK_EOF
-} TkClass;
-
-typedef struct { TkClass class; char * value; } Token;
-
-/* -- EXPRESSIONS --*/
-typedef enum {
-    LITERAL,
-    OP_CALL,
-    OP_VAR,
-    OP_ASSIGN,
-    OP_UNARY,
-    OP_BINARY,
-} ExprClass;
-
-typedef struct {
-    ExprClass class;
-    void * expr;
-} Expr;
-
-typedef struct { u32 localsb; Expr body; } Function;
-
-typedef struct { Ident ident; } OpVar;
-typedef struct { Ident ident; Expr val; } OpAssign;
-
-typedef struct { void * val; } Literal;
-
-typedef struct {
-    Expr fn;
-    Expr * args;
-    u32 args_len;
-    u32 * arg_typesb;
-    u32 argsb;
-} OpCall;
-
-static u32 sof_type[] = {
-    [TYPE_INT] = sof(Integer),
-    [TYPE_FN_PTR] = sof(Function *)
-};
+#define sof sizeof
 
 bool name_in(char * name, Def * defs, u32 defs_len, u32 * out_index) {
     for (*out_index = 0; *out_index < defs_len; (*out_index)++)
@@ -148,6 +58,14 @@ void parse_function_call_args(
     *out_argsb = argsb;
 }
 
+BuiltinClass str_to_builtin(char * str) {
+    for (BuiltinClass i = 0; i < ARRLEN(builtin_names); i++) {
+        if (!strcmp(str, builtin_names[i]))
+            return i;
+    }
+    return B_NONE;
+}
+
 bool parse_var(
     char * var_name,
     Def * global_defs, u32 globals_len, Def * arg_defs,
@@ -188,8 +106,27 @@ void parse_expr(
             *out_next_token = &tokens[1];
             return;
         } case TK_IDENT: {
+            /* ident as expr if not a builtin is a variable, maybe a function call */
             Type var_type;
             Ident ident;
+
+            BuiltinClass bclass = str_to_builtin(tokens->value);
+
+            if (bclass != B_NONE) {
+                OpBuiltin op = (OpBuiltin) { .class = bclass };
+                Token * token_ptr = &tokens[2];
+                parse_function_call_args(
+                    &token_ptr,
+                    global_defs, globals_len, arg_defs, args_len,
+                    local_defs, locals_len, locals_cap,
+                    &op.args, &op.arg_typesb, &op.args_len, &op.argsb
+                );
+                *out_expr = (Expr) { OP_BUILTIN, malloc(sof(OpBuiltin)) };
+                *out_ret_type = (Type) { .class = TYPE_INT };
+                *(OpBuiltin *)(out_expr->expr) = op;
+                *out_next_token = &token_ptr[1];
+                return;
+            }
 
             if (!parse_var(
                 tokens[0].value,
@@ -426,11 +363,11 @@ void parse_tokens(Token ** tokens, void ** out_globals, Function ** out_main) {
 
     for (u32 i = 0; i < globals_len; i++) {
         Def def = global_defs[i];
+        Def * arg_defs;
+        u32 args_len;
+        Token * function_body;
         switch (def.type.class) {
             case TYPE_FN_PTR:
-                Def * arg_defs;
-                u32 args_len;
-                Token * function_body;
                 parse_function_def(def.init, &arg_defs, &args_len, &function_body, NULL);
                 Function * fn = malloc(sof(Function));
                 *fn = parse_function_code(function_body, global_defs, globals_len, arg_defs, args_len, NULL); 
@@ -454,10 +391,13 @@ void eval_expr(
     Expr * expr, void * globals, void * locals,
     void * args, void * ret_ptr, u32 retb
 ) {
-
+    Ident var;
+    OpCall * call;
+    OpBuiltin * builtin;
+    Literal * lit;
     switch (expr->class) {
         case OP_VAR: case OP_ASSIGN:
-            Ident var = OP_VAR ? ((OpVar *) expr->expr)->ident : ((OpAssign *) expr->expr)->ident;
+            var = OP_VAR ? ((OpVar *) expr->expr)->ident : ((OpAssign *) expr->expr)->ident;
             void * loc_ptr[] = { [GLOBAL] = globals, [LOCAL] = locals, [ARGUMENT] = args };
             void * var_ptr = loc_ptr[var_location(var)] + var_offset(var);
             if (expr->class == OP_VAR) {
@@ -472,7 +412,7 @@ void eval_expr(
             }
             break;
         case OP_CALL:
-            OpCall * call = (OpCall *) expr->expr;
+            call = (OpCall *) expr->expr;
             void * arg_vals = malloc(call->argsb);
             void * arg_ptr = arg_vals;
 
@@ -489,8 +429,13 @@ void eval_expr(
             eval_function(fn, globals, arg_vals, ret_ptr, retb);
             free(arg_vals);
             break;
+        case OP_BUILTIN:
+            builtin = (OpBuiltin *) expr->expr;
+
+            eval_builtin(builtin, globals, locals, args, ret_ptr, retb);
+            break; 
         case LITERAL:
-            Literal * lit = (Literal *) expr->expr;
+            lit = (Literal *) expr->expr;
             memcpy(ret_ptr, lit->val, retb);
             break;
         default:
@@ -524,9 +469,11 @@ int main() {
             (Token) { TK_OPEN, NULL },
             (Token) { TK_CLOSE, NULL },
             (Token) { TK_BEGIN, NULL },
-                (Token) { TK_IDENT, "function1" },
+                (Token) { TK_IDENT, "if" },
                 (Token) { TK_OPEN, NULL },
+                    (Token) { TK_INT, "0" },
                     (Token) { TK_INT, "525" },
+                    (Token) { TK_INT, "476" },
                 (Token) { TK_CLOSE, NULL },
             (Token) { TK_END, NULL },
 

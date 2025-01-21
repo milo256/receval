@@ -1,5 +1,5 @@
 CC := gcc
-CFLAGS := -Wall -Wextra -g -O0
+CFLAGS := -std=c99 -Wall -Wextra -g -O0
 APP_NAME := receval2
 
 all:
