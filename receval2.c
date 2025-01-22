@@ -6,7 +6,6 @@
 #include "types.h"
 #include "parse.h"
 #include "macros.h"
-#include "builtin.h"
 
 /* my z key is broken. sof = sizeof and b at the end of a
  * variable name means it's a size in (b)ytes */
@@ -88,43 +87,43 @@ int eval_main(Function * fn, void * globals) {
     return ret;
 }
 
+#define tk(class) (Token) { .class = class, .str = NULL, .strlen = 0 }
+
 int main() {
-
     Token *code = (Token[]) {
-        (Token) { TK_ASSIGN, NULL },
-        (Token) { TK_IDENT, "main" },
-            (Token) { TK_FUNCTION, NULL },
-            (Token) { TK_IDENT, "int" },
-            (Token) { TK_OPEN, NULL },
-            (Token) { TK_CLOSE, NULL },
-            (Token) { TK_BEGIN, NULL },
-                (Token) { TK_IDENT, "seq" },
-                (Token) { TK_OPEN, NULL },
-                    (Token) { TK_ASSIGN, NULL },
-                        (Token) { TK_IDENT, "i" },
-                        (Token) { TK_INT, "10" },
-                    (Token) { TK_IDENT, "while" },
-                    (Token) { TK_OPEN, NULL },
-                        (Token) { TK_IDENT, "i" },
-                        (Token) { TK_IDENT, "seq" },
-                        (Token) { TK_OPEN, NULL },
-                            (Token) { TK_ASSIGN, NULL },
-                                (Token) { TK_IDENT, "i" },
-                                (Token) { TK_IDENT, "-" },
-                                (Token) { TK_OPEN, NULL },
-                                    (Token) { TK_IDENT, "i" },
-                                    (Token) { TK_INT, "1" },
-                                (Token) { TK_CLOSE, NULL },
-                            (Token) { TK_IDENT, "print" },
-                            (Token) { TK_OPEN, NULL },
-                                (Token) { TK_IDENT, "i" },
-                            (Token) { TK_CLOSE, NULL },
-                        (Token) { TK_CLOSE, NULL }, 
-                    (Token) { TK_CLOSE, NULL },
-                (Token) { TK_CLOSE, NULL },
-            (Token) { TK_END, NULL },
-
-        (Token) { TK_EOF, NULL }
+        (Token) { TK_ASSIGN },
+        (Token) { TK_IDENT, LSTR("main") },
+            (Token) { TK_FUNCTION },
+            (Token) { TK_IDENT, LSTR("int") },
+            (Token) { TK_OPEN },
+            (Token) { TK_CLOSE },
+            (Token) { TK_BEGIN },
+                (Token) { TK_IDENT, LSTR("seq") },
+                (Token) { TK_OPEN },
+                    (Token) { TK_ASSIGN },
+                        (Token) { TK_IDENT, LSTR("i") },
+                        (Token) { TK_INT, LSTR("10") },
+                    (Token) { TK_IDENT, LSTR("while") },
+                    (Token) { TK_OPEN },
+                        (Token) { TK_IDENT, LSTR("i") },
+                        (Token) { TK_IDENT, LSTR("seq") },
+                        (Token) { TK_OPEN },
+                            (Token) { TK_ASSIGN },
+                                (Token) { TK_IDENT, LSTR("i") },
+                                (Token) { TK_IDENT, LSTR("-") },
+                                (Token) { TK_OPEN },
+                                    (Token) { TK_IDENT, LSTR("i") },
+                                    (Token) { TK_INT, LSTR("1") },
+                                (Token) { TK_CLOSE },
+                            (Token) { TK_IDENT, LSTR("print") },
+                            (Token) { TK_OPEN },
+                                (Token) { TK_IDENT, LSTR("i") },
+                            (Token) { TK_CLOSE },
+                        (Token) { TK_CLOSE }, 
+                    (Token) { TK_CLOSE },
+                (Token) { TK_CLOSE },
+            (Token) { TK_END },
+        (Token) { TK_EOF }
     };
 
     void * globals;

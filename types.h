@@ -1,6 +1,5 @@
 #pragma once
 
-
 typedef unsigned int u32;
 typedef int i32;
 
@@ -10,6 +9,13 @@ typedef i32 Integer;
 typedef u32 Ident;
 
 enum VarLocation { GLOBAL, LOCAL, ARGUMENT };
+
+typedef struct {
+    char * chars;
+    u32 len;
+} LStr;
+
+#define LSTR(cstr) (LStr) { .chars = cstr, .len = strlen(cstr) }
 
 /* -- TYPES -- */
 /* Note: receval does not have classes. the word "class" anywhere in this codebase just means "kind" or "category",
@@ -29,7 +35,7 @@ typedef struct Type {
 /* we don't need ident because ident is just offset + location,
  * and location is which array the def is stored in */
 typedef struct {
-    char * name;
+    LStr name;
     Type type;
     u32 offset;
     void * init; /* location of the initialiser in code. only used for static
@@ -49,7 +55,10 @@ typedef enum {
     TK_EOF
 } TkClass;
 
-typedef struct { TkClass class; char * value; } Token;
+typedef struct {
+    TkClass class;
+    LStr val;
+} Token;
 
 /* -- EXPRESSIONS --*/
 typedef enum {
@@ -104,15 +113,3 @@ static u32 sof_type[] = {
     [TYPE_INT] = sizeof(Integer),
     [TYPE_FN_PTR] = sizeof(Function *)
 };
-
-static char * builtin_names[] = {
-    [B_ADD_I] = "+",
-    [B_SUB_I] = "-",
-    [B_MUL_I] = "*",
-    [B_DIV_I] = "/",
-    [B_IF] = "if",
-    [B_WHILE] = "while",
-    [B_SEQ] = "seq",
-    [B_PRINT_I] = "print"
-};
-

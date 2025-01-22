@@ -3,14 +3,19 @@
 #include <string.h>
 #include <stdbool.h>
 
+#include "builtin.h"
 #include "types.h"
 #include "macros.h"
 
 #define sof sizeof
 
-bool name_in(char * name, Def * defs, u32 defs_len, u32 * out_index) {
+int lstr_eq(LStr a, LStr b) {
+    return a.len == b.len && !strncmp(a.chars, b.chars, MIN(a.len, b.len));
+}
+
+bool name_in(LStr name, Def * defs, u32 defs_len, u32 * out_index) {
     for (*out_index = 0; *out_index < defs_len; (*out_index)++)
-        if (!strcmp(defs[*out_index].name, name)) return true;
+        if (lstr_eq(defs[*out_index].name, name)) return true;
     return false;
 }
 
@@ -55,7 +60,7 @@ void parse_function_call_args(
 }
 
 bool parse_var(
-    char * var_name,
+    LStr var_name,
     Def * global_defs, u32 globals_len, Def * arg_defs,
     u32 args_len, Def * local_defs, u32 locals_len,
     Type * out_type, Ident * out_ident
@@ -74,12 +79,19 @@ bool parse_var(
     return true;
 }
 
-BuiltinClass str_to_builtin(char * str) {
+BuiltinClass lstr_to_builtin(LStr str) {
     for (BuiltinClass i = 0; i < ARRLEN(builtin_names); i++) {
-        if (!strcmp(str, builtin_names[i]))
+        if (lstr_eq(str, LSTR(builtin_names[i])))
             return i;
     }
     return B_NONE;
+}
+
+Integer lstr_to_int(LStr str) {
+    char * end_ptr;
+    Integer ret = strtol(str.chars, &end_ptr, 10); 
+    ASSERT(end_ptr == str.chars + str.len);
+    return ret;
 }
 
 void parse_expr(
@@ -90,7 +102,7 @@ void parse_expr(
 ) {
     switch (tokens->class) {
         case TK_INT: {
-            Integer integer = atoi(tokens->value);
+            Integer integer = lstr_to_int(tokens->val);
             *out_ret_type = (Type) { .class = TYPE_INT };
             *out_expr = (Expr) {
                 .class = LITERAL,
@@ -106,7 +118,7 @@ void parse_expr(
             Type var_type;
             Ident ident;
 
-            BuiltinClass bclass = str_to_builtin(tokens->value);
+            BuiltinClass bclass = lstr_to_builtin(tokens->val);
 
             if (bclass != B_NONE) {
                 OpBuiltin op = (OpBuiltin) { .class = bclass };
@@ -125,7 +137,7 @@ void parse_expr(
             }
 
             if (!parse_var(
-                tokens[0].value,
+                tokens[0].val,
                 global_defs, globals_len, arg_defs, args_len, *local_defs, *locals_len,
                 &var_type, &ident
             )) PANIC();
@@ -175,7 +187,7 @@ void parse_expr(
             Ident ident;
 
             if (!parse_var(
-                tokens[1].value,
+                tokens[1].val,
                 global_defs, globals_len, arg_defs, args_len, *local_defs, *locals_len,
                 &var_type, &ident
             )) {
@@ -192,7 +204,7 @@ void parse_expr(
                 }
 
                 (*local_defs)[*locals_len] = (Def) {
-                    .name = tokens[1].value,
+                    .name = tokens[1].val,
                     .offset = var_offset(ident),
                     .type = var_type
                 };
@@ -240,8 +252,8 @@ Function parse_function_code(
     return fn;
 }
 
-Type str_to_type(char * str) {
-    if (!strcmp(str, "int"))
+Type lstr_to_type(LStr str) {
+    if (lstr_eq(str, LSTR("int")))
         return (Type) { TYPE_INT };
     else PANIC();
 }
@@ -270,8 +282,8 @@ void parse_function_def(
         ASSERT(token->class == TK_IDENT);
         ASSERT(token[1].class == TK_IDENT);
 
-        Type type = str_to_type(token->value);
-        char * name = token[1].value;
+        Type type = lstr_to_type(token->val);
+        LStr name = token[1].val;
 
         arg_defs[args_len] = (Def) {
             .name = name,
@@ -301,7 +313,7 @@ void parse_global_def(Token ** tokens, Def ** global_defs, u32 * globals_len, u3
     ASSERT(token->class == TK_ASSIGN); token++;
     ASSERT(token->class == TK_IDENT);
 
-    char * var_name = token->value;
+    LStr var_name = token->val;
 
     Type type;
     
@@ -314,7 +326,7 @@ void parse_global_def(Token ** tokens, Def ** global_defs, u32 * globals_len, u3
         };
         token++;
         ASSERT(token->class == TK_IDENT);
-        *(type.ret_type) = str_to_type(token->value);
+        *(type.ret_type) = lstr_to_type(token->val);
 
         token++;
         init_token = token;
@@ -369,15 +381,16 @@ void parse_tokens(Token ** tokens, void ** out_globals, Function ** out_main) {
                 Function * fn = malloc(sof(Function));
                 *fn = parse_function_code(function_body, global_defs, globals_len, arg_defs, args_len, NULL); 
                 *(Function **)(globals + def.offset) = fn;
-                if (!strcmp(def.name,"main")) *out_main = fn;
+                if (lstr_eq(def.name, LSTR("main"))) *out_main = fn;
                 break;
             case TYPE_INT:
                 ASSERT(((Token *)def.init)->class == TK_INT);
-                *(Integer *)(globals + def.offset) = atoi(((Token*)def.init)->value);
+                *(Integer *)(globals + def.offset) = lstr_to_int(((Token*)def.init)->val);
                 break;
             default: PANIC();
         }
     }
     *out_globals = globals;
 }
+
 

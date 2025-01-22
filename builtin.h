@@ -1,4 +1,3 @@
-
 #include "types.h"
 #include "macros.h"
 
@@ -6,6 +5,17 @@
 /* compiler is too dumb to realize we do use these */
 #include<stdlib.h>
 #include<stdio.h>
+
+static char * builtin_names[] = {
+    [B_ADD_I] = "+",
+    [B_SUB_I] = "-",
+    [B_MUL_I] = "*",
+    [B_DIV_I] = "/",
+    [B_IF] = "if",
+    [B_WHILE] = "while",
+    [B_SEQ] = "seq",
+    [B_PRINT_I] = "print"
+};
 
 void eval_expr(Expr *, void *, void *, void *, void *, u32);
 

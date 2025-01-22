@@ -1,5 +1,8 @@
 #pragma once
 
+#define MAX(A,B) ((A > B) ? A : B)
+#define MIN(A,B) ((A > B) ? B : A)
+
 #define ASSERT(A) do{ if (!(A)) {                                                      \
     fprintf(stderr, "Assertion failed on %s:%d: %s = %d\n", __FILE__, __LINE__, #A, A);\
     exit(1);                                                                           \
