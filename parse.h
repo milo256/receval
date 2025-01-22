@@ -8,7 +8,7 @@
 #include "types.h"
 #include "macros.h"
 
-#define MAX_COLS 80
+#define MAX_COLS 40
 
 #define sof sizeof
 
@@ -26,7 +26,7 @@ void error(Token * tk, char * msg) {
     char buf[MAX_COLS + 1];
     u32 len = str_end - str_start;
     u32 error_pos = at - str_start;
-    u32 error_len = MIN(tk->val.len, str_end - at);
+    u32 error_len = MAX(1, MIN(tk->val.len, str_end - at));
     strncpy(buf, str_start, len);
 
     buf[len] = '\0';
@@ -137,6 +137,7 @@ u32 var_offset(Ident ident) { return (((1 << 30) - 1) & ident); }
 void parse_expr(Token *, Def *, u32, Def *, u32, Def **, u32 *, u32 *, Expr *, Type *, Token **);
 
 void parse_function_call_args(
+    TkClass close,
     Token ** token_ptr, Def * global_defs, u32 globals_len, Def * outer_arg_defs,
     u32 outer_args_len, Def ** local_defs, u32 * locals_len, u32 * locals_cap,
     Expr ** out_args, u32 ** out_arg_typesb, u32 * out_args_len, u32 * out_argsb
@@ -147,7 +148,7 @@ void parse_function_call_args(
     args = malloc(args_cap * sof(Expr));
     arg_typesb = malloc(args_cap * sof(u32));
 
-    while((**token_ptr).class != TK_CLOSE) {
+    while((**token_ptr).class != close) {
         if (args_len >= args_cap) {
             args_cap *= 2;
             args = realloc(args, args_cap * sof(Expr));
@@ -224,6 +225,20 @@ void parse_expr(
             *(Literal *)(out_expr->expr) = literal;
             *out_next_token = &tokens[1];
             return;
+        } case TK_BEGIN: {
+            OpBuiltin op = (OpBuiltin) { .class = B_SEQ };
+            Token * token_ptr = &tokens[1];
+            parse_function_call_args(
+                TK_END, &token_ptr,
+                global_defs, globals_len, arg_defs, args_len,
+                local_defs, locals_len, locals_cap,
+                &op.args, &op.arg_typesb, &op.args_len, &op.argsb
+            );
+            *out_expr = (Expr) { OP_BUILTIN, malloc(sof(OpBuiltin)) };
+            *out_ret_type = (Type) { .class = TYPE_INT };
+            *(OpBuiltin *)(out_expr->expr) = op;
+            *out_next_token = &token_ptr[1];
+            return;
         } case TK_IDENT: {
             /* ident as expr if not a builtin is a variable, maybe a function call */
             Type var_type;
@@ -235,7 +250,7 @@ void parse_expr(
                 OpBuiltin op = (OpBuiltin) { .class = bclass };
                 Token * token_ptr = &tokens[2];
                 parse_function_call_args(
-                    &token_ptr,
+                    TK_CLOSE, &token_ptr,
                     global_defs, globals_len, arg_defs, args_len,
                     local_defs, locals_len, locals_cap,
                     &op.args, &op.arg_typesb, &op.args_len, &op.argsb
@@ -270,7 +285,7 @@ void parse_expr(
             
             Token * token_ptr = &tokens[2];
             parse_function_call_args(
-                &token_ptr, 
+                TK_CLOSE, &token_ptr, 
                 global_defs, globals_len, arg_defs, args_len,
                 local_defs, locals_len, locals_cap,
                 &call.args, &call.arg_typesb, &call.args_len, &call.argsb
@@ -371,18 +386,25 @@ Type lstr_to_type(LStr str) {
     else return (Type) { .class = TYPE_NONE };
 }
 
+int delim(Token * token) {
+    if (token->class == TK_OPEN || token->class == TK_BEGIN)
+        return 1;
+    else if (token->class == TK_CLOSE || token->class == TK_END)
+        return -1;
+    else return 0;
+}
+
 /* TODO: doesn't work for assignments not within a function call */
-void skip_to_end(Token ** token, TkClass begin, TkClass end) {
+void skip_to_end(Token ** token) {
     Token * starting_token = *token;
-    if ((*token)->class != begin)
+    if (delim(*token) < 1)
         (*token)++;
-    if ((*token)->class != begin)
+    if (delim(*token) < 1)
         return;
     (*token)++;
     for (u32 d = 1; d;) {
         if ((*token)->class == TK_EOF) error(starting_token, "missing closing delimiter");
-        if((*token)->class == begin) d++;
-        if((*token)->class == end) d--;
+        d += delim(*token);
         (*token)++;
     }
 }
@@ -427,7 +449,7 @@ void parse_function_def(
     
     if (out_function_code) *out_function_code = token;
 
-    skip_to_end(&token, TK_OPEN, TK_CLOSE);
+    skip_to_end(&token);
 
     if (out_next_token) *out_next_token = token;
 }
@@ -461,8 +483,8 @@ void parse_global_def(Token ** tokens, Def ** global_defs, u32 * globals_len, u3
         init_token = token;
         if (token->class != TK_OPEN)
             error(token, "expected function arguments list `(...)`");
-        skip_to_end(&token, TK_OPEN, TK_CLOSE);
-        skip_to_end(&token, TK_OPEN, TK_CLOSE);
+        skip_to_end(&token);
+        skip_to_end(&token);
     } else if (token->class == TK_INT) {
         type = (Type) { TYPE_INT };
         init_token = token;
