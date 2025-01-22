@@ -27,6 +27,7 @@ void eval_builtin(
     u32 * arg_typesb = builtin->arg_typesb;
 
     Integer condition;
+    Integer val_tmp;
     switch (builtin->class) {
         case B_ADD_I: case B_SUB_I: case B_MUL_I: case B_DIV_I: 
             ASSERT(args_len > 1);
@@ -75,8 +76,10 @@ void eval_builtin(
             eval_expr(&args[args_len-1], globals, locals, outer_args, ret_ptr, retb);
             break;
         case B_PRINT_I:
-            eval_expr(args, globals, locals, outer_args, ret_ptr, retb);
-            printf("%d\n", *(Integer *)ret_ptr);
+            eval_expr(args, globals, locals, outer_args, &val_tmp, sizeof(Integer));
+            printf("%d\n", val_tmp);
+            if (retb)
+                memcpy(ret_ptr, &val_tmp, retb);
             break;
             
         default:PANIC();

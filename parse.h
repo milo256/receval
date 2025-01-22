@@ -132,7 +132,7 @@ bool parse_var(
     u32 var_index;
     if (name_in(var_name, local_defs, locals_len, &var_index)) {
         *out_type = local_defs[var_index].type;
-        *out_ident = ident_new(LOCAL, global_defs[var_index].offset);
+        *out_ident = ident_new(LOCAL, local_defs[var_index].offset);
     } else if (name_in(var_name, arg_defs, args_len, &var_index)) {
         *out_type = arg_defs[var_index].type;
         *out_ident = ident_new(ARGUMENT, arg_defs[var_index].offset);
@@ -310,9 +310,8 @@ Function parse_function_code(
         &fn.body, ret_type, &end_token
     );
 
-    fn.localsb = locals_len ? local_defs[locals_len - 1].offset : 0;
+    fn.localsb = locals_len ? local_defs[locals_len - 1].offset + sof_type[local_defs[locals_len - 1].type.class] : 0;
     if (out_type) (*out_type = (Type) { .class = TYPE_FN_PTR, .ret_type = ret_type });
-    ASSERT(end_token[0].class == TK_END);
     return fn;
 }
 
@@ -323,7 +322,10 @@ Type lstr_to_type(LStr str) {
 }
 
 void skip_to_end(Token ** token, TkClass begin, TkClass end) {
-    ASSERT((*token)->class == begin);
+    if ((*token)->class != begin)
+        (*token)++;
+    if ((*token)->class != begin)
+        return;
     (*token)++;
     for (u32 d = 1; d && (*token)->class != TK_EOF;) {
         if((*token)->class == begin) d++;
@@ -363,11 +365,10 @@ void parse_function_def(
     *out_args_len = args_len;
 
     ASSERT(token->class == TK_CLOSE); token++;
-    ASSERT(token->class == TK_BEGIN);
     
-    if (out_function_code) *out_function_code = &token[1];
+    if (out_function_code) *out_function_code = token;
 
-    skip_to_end(&token, TK_BEGIN, TK_END);
+    skip_to_end(&token, TK_OPEN, TK_CLOSE);
 
     if (out_next_token) *out_next_token = token;
 }
@@ -394,8 +395,9 @@ void parse_global_def(Token ** tokens, Def ** global_defs, u32 * globals_len, u3
 
         token++;
         init_token = token;
+        ASSERT(token->class == TK_OPEN);
         skip_to_end(&token, TK_OPEN, TK_CLOSE);
-        skip_to_end(&token, TK_BEGIN, TK_END);
+        skip_to_end(&token, TK_OPEN, TK_CLOSE);
     } else if (token->class == TK_INT) {
         type = (Type) { TYPE_INT };
         init_token = token;

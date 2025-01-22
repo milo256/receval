@@ -28,7 +28,7 @@ void eval_expr(
             void * loc_ptr[] = { [GLOBAL] = globals, [LOCAL] = locals, [ARGUMENT] = args };
             void * var_ptr = loc_ptr[var_location(var)] + var_offset(var);
             if (expr->class == OP_VAR) {
-                memcpy(ret_ptr, loc_ptr[var_location(var)] + var_offset(var), retb); 
+                memcpy(ret_ptr, var_ptr, retb); 
             } else {
                 OpAssign * op = (OpAssign *) expr->expr;
                 eval_expr(
@@ -90,48 +90,38 @@ int eval_main(Function * fn, void * globals) {
 #define tk(class) (Token) { .class = class, .str = NULL, .strlen = 0 }
 
 int main() {
-    Token * code = tokenize(
-        "= main function int () {"
-        "   print(12345)"
-        "}"
-    );
     /*
-    Token *code = (Token[]) {
-        (Token) { TK_ASSIGN },
-        (Token) { TK_IDENT, LSTR("main") },
-            (Token) { TK_FUNCTION },
-            (Token) { TK_IDENT, LSTR("int") },
-            (Token) { TK_OPEN },
-            (Token) { TK_CLOSE },
-            (Token) { TK_BEGIN },
-                (Token) { TK_IDENT, LSTR("seq") },
-                (Token) { TK_OPEN },
-                    (Token) { TK_ASSIGN },
-                        (Token) { TK_IDENT, LSTR("i") },
-                        (Token) { TK_INT, LSTR("10") },
-                    (Token) { TK_IDENT, LSTR("while") },
-                    (Token) { TK_OPEN },
-                        (Token) { TK_IDENT, LSTR("i") },
-                        (Token) { TK_IDENT, LSTR("seq") },
-                        (Token) { TK_OPEN },
-                            (Token) { TK_ASSIGN },
-                                (Token) { TK_IDENT, LSTR("i") },
-                                (Token) { TK_IDENT, LSTR("-") },
-                                (Token) { TK_OPEN },
-                                    (Token) { TK_IDENT, LSTR("i") },
-                                    (Token) { TK_INT, LSTR("1") },
-                                (Token) { TK_CLOSE },
-                            (Token) { TK_IDENT, LSTR("print") },
-                            (Token) { TK_OPEN },
-                                (Token) { TK_IDENT, LSTR("i") },
-                            (Token) { TK_CLOSE },
-                        (Token) { TK_CLOSE }, 
-                    (Token) { TK_CLOSE },
-                (Token) { TK_CLOSE },
-            (Token) { TK_END },
-        (Token) { TK_EOF }
-    };
-    */
+    Token * code = tokenize(
+"= add_five function int (int x)      "
+"   +(x 5)                           "
+"                                     "
+"= main function int () seq(          "
+"   = i 10"
+"   while(i seq("
+"       = i -(i 1)"
+"       print(23)"
+"   ))"
+"   123"
+")";*/
+    Token * code = tokenize(
+        ""
+        "= a_global 10"
+        ""
+        "= main function int () seq("
+        "   = i 10"
+        "   = j 0"
+        "   while(i seq("
+        "       print(j)"
+        "       = j +(j 1)"
+        "       = i -(i 1)"
+        "   ))"
+        "   add_five(a_global)"
+        ")"
+        ""
+        "= add_five function int (int n)"
+        "   +(n 5)"
+        ""
+    );
 
     void * globals;
     Function * main_fn;
