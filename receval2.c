@@ -89,43 +89,24 @@ int eval_main(Function * fn, void * globals) {
 
 #define tk(class) (Token) { .class = class, .str = NULL, .strlen = 0 }
 
-int main() {
-    /*
-    Token * code = tokenize(
-"= add_five function int (int x)      "
-"   +(x 5)                           "
-"                                     "
-"= main function int () seq(          "
-"   = i 10"
-"   while(i seq("
-"       = i -(i 1)"
-"       print(23)"
-"   ))"
-"   123"
-")";*/
-    Token * code = tokenize(
-        ""
-        "= a_global 10"
-        ""
-        "= main function int () seq("
-        "   = i 10"
-        "   = j 0"
-        "   while(i seq("
-        "       print(j)"
-        "       = j +(j 1)"
-        "       = i -(i 1)"
-        "   ))"
-        "   add_five(a_global)"
-        ")"
-        ""
-        "= add_five function int (int n)"
-        "   +(n 5)"
-        ""
-    );
+int main(int argc, char * argv[]) {
+    char * filename = argc > 1 ? argv[1] : "demo.re";
+    FILE * f = fopen(filename, "r");
+
+    if (!f)
+        PANIC();
+
+    fseek(f, 0, SEEK_END);
+    u32 code_len = ftell(f);
+    rewind(f);
+    char * code = malloc(code_len);
+    fread(code, 1, code_len, f); 
+    fclose(f);
 
     void * globals;
     Function * main_fn;
-    parse_tokens(&code, &globals, &main_fn);
+    Token * tokens = tokenize(code);
+    parse_tokens(&tokens, &globals, &main_fn);
     int ret = eval_main(main_fn, globals);
     printf("%d\n",ret);
 }

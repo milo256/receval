@@ -8,9 +8,9 @@
     exit(1);                                                                           \
 }} while(0)
 
-#define PANIC() do {                                                     \
+#define PANIC(...) do {                                  \
     fprintf(stderr, "Panic! %s:%d\n", __FILE__, __LINE__); \
-    exit(-1);                                                            \
+    exit(-1);                                            \
 } while(0)
 
 #define ARRLEN(A) (sof(A)/sof(A[0]))

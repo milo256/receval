@@ -321,6 +321,7 @@ Type lstr_to_type(LStr str) {
     else PANIC();
 }
 
+/* TODO: doesn't work for assignments not within a function */
 void skip_to_end(Token ** token, TkClass begin, TkClass end) {
     if ((*token)->class != begin)
         (*token)++;
