@@ -8,7 +8,38 @@
 #include "types.h"
 #include "macros.h"
 
+#define MAX_COLS 80
+
 #define sof sizeof
+
+void error(Token * tk, char * msg) {
+    fprintf(stderr, "Receval: Error on %d:%d: %s\n", tk->dbug_line, tk->dbug_column, msg);
+    char * at = tk->val.chars;
+    char * line_start = at - tk->dbug_column + 1;
+    char * line_end = strchr(at, '\n');
+
+    char * str_start = MAX(line_start, line_end - MAX_COLS);
+    if ((at - 4) < str_start)
+        str_start = MAX(at - 4, line_start);
+    char * str_end = MIN(line_start + MAX_COLS, line_end);
+
+    char buf[MAX_COLS + 1];
+    u32 len = str_end - str_start;
+    u32 error_pos = at - str_start;
+    u32 error_len = MIN(tk->val.len, str_end - at);
+    strncpy(buf, str_start, len);
+
+    buf[len] = '\0';
+
+    u32 margin_width = fprintf(stderr, " %d |", tk->dbug_line);
+    fprintf(stderr, "%s\n", buf);
+    for (u32 i = 0; i < error_pos + margin_width; i++)
+        putchar(' ');
+    for (u32 i = 0; i < error_len; i++)
+        putchar('^');
+    putchar('\n');
+    exit(1);
+}
 
 int lstr_eq(LStr a, LStr b) {
     return a.len == b.len && !strncmp(a.chars, b.chars, MIN(a.len, b.len));
@@ -38,14 +69,23 @@ Token * tokenize(char * code) {
         if (++tokens_len > tokens_cap) { \
             tokens_cap *= 2; tokens = realloc(tokens, tokens_cap * sizeof(Token)); \
         } \
-        tokens[tokens_len-1] = (Token) { get_token_class(m_token_str), m_token_str }; \
+        tokens[tokens_len-1] = (Token) { get_token_class(m_token_str), m_token_str, line, column - tlen }; \
     } while(0)
+#define new_char() \
+    if (code[ts + tlen] == '\n') { \
+        column = 0; \
+        line++; \
+    } else { \
+        column++; \
+    }
 
     char char_tokens[] = "=(){}";
     u32 tokens_len = 0;
     u32 tokens_cap = 2;
     Token * tokens = malloc(tokens_cap * sizeof(Token));
 
+    u32 line = 1;
+    u32 column = 0;
     u32 ts = 0;
     u32 tlen = 0;
     char ch;
@@ -53,7 +93,9 @@ Token * tokenize(char * code) {
     while ((ch = code[ts + tlen])) {
         bool char_token = strchr(char_tokens, ch);
         if (!(char_token || isspace(ch))) {
-            tlen++; continue; /* continue scanning */
+            new_char();
+            tlen++;
+            continue; /* continue scanning */
         }
 
         if (tlen) {
@@ -64,9 +106,13 @@ Token * tokenize(char * code) {
         }
         if (char_token) {
             push_token(&code[ts], 1);
+            new_char();
             ts++;
         }
-        if (!(tlen || char_token)) ts++;
+        if (!(tlen || char_token)) {
+            new_char();
+            ts++;
+        }
     }
 
     push_token("", 0);
@@ -75,6 +121,7 @@ Token * tokenize(char * code) {
     return tokens;
 }
 #undef push_token
+#undef new_char
 
 
 bool name_in(LStr name, Def * defs, u32 defs_len, u32 * out_index) {
@@ -204,7 +251,7 @@ void parse_expr(
                 tokens[0].val,
                 global_defs, globals_len, arg_defs, args_len, *local_defs, *locals_len,
                 &var_type, &ident
-            )) PANIC();
+            )) error(tokens, "unknown identifier");
 
             Expr var_expr = (Expr) { .class = OP_VAR, .expr = malloc(sof(OpVar)) };
             *(OpVar *)(var_expr.expr) = (OpVar) { .ident = ident };
@@ -216,7 +263,8 @@ void parse_expr(
                 return;
             }
 
-            ASSERT(var_type.class == TYPE_FN_PTR);
+            if (var_type.class != TYPE_FN_PTR)
+                error(&tokens[1], "not a function");
 
             OpCall call = (OpCall) { .fn = var_expr };
             
@@ -236,7 +284,8 @@ void parse_expr(
 
             return;
         } case TK_ASSIGN: {
-            ASSERT(tokens[1].class == TK_IDENT);
+            if (tokens[1].class != TK_IDENT)
+                error(&tokens[1], "expected identifier");
 
             Expr val;
             Type val_type;
@@ -275,7 +324,8 @@ void parse_expr(
                 (*locals_len)++;
             }
             /* should be deep comparison */
-            ASSERT(var_type.class == val_type.class); 
+            if (var_type.class != val_type.class)
+                error(&tokens[2], "mismatched types");
 
             Expr expr = (Expr) { OP_ASSIGN, malloc(sof(OpAssign)) };
             *(OpAssign*)expr.expr = (OpAssign) {
@@ -287,7 +337,7 @@ void parse_expr(
             *out_ret_type = var_type;
             return; 
         }
-        default: PANIC();
+        default: error(tokens, "expected expression");
     }
 }
 
@@ -317,18 +367,20 @@ Function parse_function_code(
 
 Type lstr_to_type(LStr str) {
     if (lstr_eq(str, LSTR("int")))
-        return (Type) { TYPE_INT };
-    else PANIC();
+        return (Type) { .class = TYPE_INT };
+    else return (Type) { .class = TYPE_NONE };
 }
 
-/* TODO: doesn't work for assignments not within a function */
+/* TODO: doesn't work for assignments not within a function call */
 void skip_to_end(Token ** token, TkClass begin, TkClass end) {
+    Token * starting_token = *token;
     if ((*token)->class != begin)
         (*token)++;
     if ((*token)->class != begin)
         return;
     (*token)++;
-    for (u32 d = 1; d && (*token)->class != TK_EOF;) {
+    for (u32 d = 1; d;) {
+        if ((*token)->class == TK_EOF) error(starting_token, "missing closing delimiter");
         if((*token)->class == begin) d++;
         if((*token)->class == end) d--;
         (*token)++;
@@ -343,13 +395,19 @@ void parse_function_def(
     u32 args_len = 0, arg_offset = 0, args_cap = 2;
     Def * arg_defs = malloc(sof(Def) * args_cap);
 
+    /* earlier stages in the parser should have already picked up on
+     * missing or unpaired parenthesis */
     ASSERT(token->class == TK_OPEN);
     token++;
     while (token->class != TK_CLOSE) {
-        ASSERT(token->class == TK_IDENT);
-        ASSERT(token[1].class == TK_IDENT);
 
         Type type = lstr_to_type(token->val);
+        if (token->class != TK_IDENT || type.class == TYPE_NONE)
+            error(token, "expected type annotation");
+
+        if (token[1].class != TK_IDENT)
+            error(&token[1], "expected identifier");
+
         LStr name = token[1].val;
 
         arg_defs[args_len] = (Def) {
@@ -376,8 +434,11 @@ void parse_function_def(
 
 void parse_global_def(Token ** tokens, Def ** global_defs, u32 * globals_len, u32 * globalsb, u32 * globals_cap) {
     Token * token = *tokens;
-    ASSERT(token->class == TK_ASSIGN); token++;
-    ASSERT(token->class == TK_IDENT);
+    if (token->class != TK_ASSIGN)
+        error(token, "expected global variable definition");
+    token++;
+    if (token->class != TK_IDENT)
+        error(token, "expected identifier");
 
     LStr var_name = token->val;
 
@@ -391,19 +452,22 @@ void parse_global_def(Token ** tokens, Def ** global_defs, u32 * globals_len, u3
             .ret_type = malloc(sof(Type))
         };
         token++;
-        ASSERT(token->class == TK_IDENT);
-        *(type.ret_type) = lstr_to_type(token->val);
+        Type ret_type = lstr_to_type(token->val);
+        if (token->class != TK_IDENT || ret_type.class == TYPE_NONE)
+            error(token, "expected type annotation");
+        *(type.ret_type) = ret_type;
 
         token++;
         init_token = token;
-        ASSERT(token->class == TK_OPEN);
+        if (token->class != TK_OPEN)
+            error(token, "expected function arguments list `(...)`");
         skip_to_end(&token, TK_OPEN, TK_CLOSE);
         skip_to_end(&token, TK_OPEN, TK_CLOSE);
     } else if (token->class == TK_INT) {
         type = (Type) { TYPE_INT };
         init_token = token;
         token++;
-    } else PANIC();
+    } else error(token, "value expected for global definition");
     
     if (*globals_len >= *globals_cap) {
         if (*globals_cap == 0) {

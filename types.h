@@ -25,6 +25,7 @@ typedef struct {
 typedef enum {
     TYPE_INT,
     TYPE_FN_PTR,
+    TYPE_NONE
 } TypeClass;
 
 typedef struct Type {
@@ -59,6 +60,8 @@ typedef enum {
 typedef struct {
     TkClass class;
     LStr val;
+    u32 dbug_line;
+    u32 dbug_column;
 } Token;
 
 /* -- EXPRESSIONS --*/
