@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
+#include <ctype.h>
 
 #include "builtin.h"
 #include "types.h"
@@ -12,6 +13,69 @@
 int lstr_eq(LStr a, LStr b) {
     return a.len == b.len && !strncmp(a.chars, b.chars, MIN(a.len, b.len));
 }
+
+u32 get_token_class(LStr str) {
+    if (str.len == 0)
+        return TK_NONE;
+    if (str.len == 1) switch(str.chars[0]) {
+        case '=': return TK_ASSIGN;
+        case '(': return TK_OPEN;
+        case ')': return TK_CLOSE;
+        case '{': return TK_BEGIN;
+        case '}': return TK_END;
+    }
+    if (isdigit(str.chars[0]))
+        return TK_INT;
+    if (lstr_eq(str, LSTR("function")))
+        return TK_FUNCTION;
+    return TK_IDENT;
+}
+
+Token * tokenize(char * code) {
+#define push_token(chars, len) \
+    do { \
+        LStr m_token_str = { chars, len }; \
+        if (++tokens_len > tokens_cap) { \
+            tokens_cap *= 2; tokens = realloc(tokens, tokens_cap * sizeof(Token)); \
+        } \
+        tokens[tokens_len-1] = (Token) { get_token_class(m_token_str), m_token_str }; \
+    } while(0)
+
+    char char_tokens[] = "=(){}";
+    u32 tokens_len = 0;
+    u32 tokens_cap = 2;
+    Token * tokens = malloc(tokens_cap * sizeof(Token));
+
+    u32 ts = 0;
+    u32 tlen = 0;
+    char ch;
+
+    while ((ch = code[ts + tlen])) {
+        bool char_token = strchr(char_tokens, ch);
+        if (!(char_token || isspace(ch))) {
+            tlen++; continue; /* continue scanning */
+        }
+
+        if (tlen) {
+            /* scanned a token */
+            push_token(&code[ts], tlen);
+            ts += tlen;
+            tlen = 0;
+        }
+        if (char_token) {
+            push_token(&code[ts], 1);
+            ts++;
+        }
+        if (!(tlen || char_token)) ts++;
+    }
+
+    push_token("", 0);
+    tokens[tokens_len-1].class = TK_EOF;
+
+    return tokens;
+}
+#undef push_token
+
 
 bool name_in(LStr name, Def * defs, u32 defs_len, u32 * out_index) {
     for (*out_index = 0; *out_index < defs_len; (*out_index)++)

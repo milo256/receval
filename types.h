@@ -52,7 +52,8 @@ typedef enum {
     TK_CLOSE,
     TK_BEGIN,
     TK_END,
-    TK_EOF
+    TK_EOF,
+    TK_NONE
 } TkClass;
 
 typedef struct {

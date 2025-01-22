@@ -90,6 +90,12 @@ int eval_main(Function * fn, void * globals) {
 #define tk(class) (Token) { .class = class, .str = NULL, .strlen = 0 }
 
 int main() {
+    Token * code = tokenize(
+        "= main function int () {"
+        "   print(12345)"
+        "}"
+    );
+    /*
     Token *code = (Token[]) {
         (Token) { TK_ASSIGN },
         (Token) { TK_IDENT, LSTR("main") },
@@ -125,6 +131,7 @@ int main() {
             (Token) { TK_END },
         (Token) { TK_EOF }
     };
+    */
 
     void * globals;
     Function * main_fn;
