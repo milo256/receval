@@ -61,13 +61,14 @@ typedef enum {
 } ExprClass;
 
 typedef enum {
-    B_ADD,
-    B_SUBTRACT,
-    B_MULTIPLY,
-    B_DIVIDE,
+    B_ADD_I,
+    B_SUB_I,
+    B_MUL_I,
+    B_DIV_I,
     B_IF,
     B_WHILE,
-    B_RETURN,
+    B_SEQ,
+    B_PRINT_I,
     B_NONE
 } BuiltinClass;
 
@@ -79,7 +80,7 @@ typedef struct {
 typedef struct { u32 localsb; Expr body; } Function;
 
 typedef struct { Ident ident; } OpVar;
-typedef struct { Ident ident; Expr val; } OpAssign;
+typedef struct { Ident ident; Expr val; u32 size; } OpAssign;
 
 typedef struct { void * val; } Literal;
 
@@ -105,12 +106,13 @@ static u32 sof_type[] = {
 };
 
 static char * builtin_names[] = {
-    [B_ADD] = "+",
-    [B_SUBTRACT] = "-",
-    [B_MULTIPLY] = "*",
-    [B_DIVIDE] = "/",
+    [B_ADD_I] = "+",
+    [B_SUB_I] = "-",
+    [B_MUL_I] = "*",
+    [B_DIV_I] = "/",
     [B_IF] = "if",
     [B_WHILE] = "while",
-    [B_RETURN] = "return"
+    [B_SEQ] = "seq",
+    [B_PRINT_I] = "print"
 };
 

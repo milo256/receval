@@ -18,11 +18,22 @@ void eval_builtin(
 
     Integer condition;
     switch (builtin->class) {
-        case B_ADD:
-        case B_SUBTRACT:
-        case B_MULTIPLY:
-        case B_DIVIDE: 
-            PANIC();
+        case B_ADD_I: case B_SUB_I: case B_MUL_I: case B_DIV_I: 
+            ASSERT(args_len > 1);
+            ASSERT(retb == 0 || retb == sizeof(Integer));
+            if (args_len == 2) {
+                Integer lhs, rhs;
+                eval_expr(args, globals, locals, outer_args, &lhs, sizeof(Integer));
+                eval_expr(&args[1], globals, locals, outer_args, &rhs, sizeof(Integer));
+                if (retb) switch (builtin->class) {
+                    case B_ADD_I: *(Integer *)ret_ptr = lhs + rhs; break;
+                    case B_SUB_I: *(Integer *)ret_ptr = lhs - rhs; break;
+                    case B_MUL_I: *(Integer *)ret_ptr = lhs * rhs; break;
+                    case B_DIV_I: *(Integer *)ret_ptr = lhs / rhs; break;
+                    default: PANIC();
+                }
+            } else
+                PANIC();
             break;
         case B_IF:
             ASSERT(args_len > 1 && args_len < 4);
@@ -31,15 +42,33 @@ void eval_builtin(
             eval_expr(args, globals, locals, outer_args, &condition, sizeof(Integer));
             if (condition)
                 eval_expr(&args[1], globals, locals, outer_args, ret_ptr, retb);
-            else if (args_len > 1)
+            else if (args_len > 2)
                 eval_expr(&args[2], globals, locals, outer_args, ret_ptr, retb);
             else
                 memset(ret_ptr, 0, retb);
             break;
         case B_WHILE:
+            ASSERT(args_len == 2);
+            ASSERT(arg_typesb[0] == sizeof(Integer));
+            
+            eval_expr(args, globals, locals, outer_args, &condition, sizeof(Integer));
+            while (condition) {
+                eval_expr(&args[1], globals, locals, outer_args, ret_ptr, retb);
+                eval_expr(args, globals, locals, outer_args, &condition, sizeof(Integer));
+            }
             break;
-        case B_RETURN:
+        case B_SEQ:
+            ASSERT(args_len > 0);
+            for (u32 i = 0; i < args_len - 1; i++) {
+                eval_expr(&args[i], globals, locals, outer_args, ret_ptr, 0);
+            }
+            eval_expr(&args[args_len-1], globals, locals, outer_args, ret_ptr, retb);
             break;
+        case B_PRINT_I:
+            eval_expr(args, globals, locals, outer_args, ret_ptr, retb);
+            printf("%d\n", *(Integer *)ret_ptr);
+            break;
+            
         default:PANIC();
     }
 

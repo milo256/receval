@@ -208,7 +208,8 @@ void parse_expr(
             Expr expr = (Expr) { OP_ASSIGN, malloc(sof(OpAssign)) };
             *(OpAssign*)expr.expr = (OpAssign) {
                 .ident = ident,
-                .val = val
+                .val = val,
+                .size = sof_type[var_type.class]
             };
             *out_expr = expr;
             *out_ret_type = var_type;
@@ -406,7 +407,7 @@ void eval_expr(
                 OpAssign * op = (OpAssign *) expr->expr;
                 eval_expr(
                     &op->val, globals, locals, args,
-                    var_ptr, retb
+                    var_ptr, op->size
                 );
                 memcpy(ret_ptr, var_ptr, retb); 
             }
@@ -461,6 +462,7 @@ int eval_main(Function * fn, void * globals) {
 }
 
 int main() {
+
     Token *code = (Token[]) {
         (Token) { TK_ASSIGN, NULL },
         (Token) { TK_IDENT, "main" },
@@ -469,29 +471,31 @@ int main() {
             (Token) { TK_OPEN, NULL },
             (Token) { TK_CLOSE, NULL },
             (Token) { TK_BEGIN, NULL },
-                (Token) { TK_IDENT, "if" },
+                (Token) { TK_IDENT, "seq" },
                 (Token) { TK_OPEN, NULL },
-                    (Token) { TK_INT, "0" },
-                    (Token) { TK_INT, "525" },
-                    (Token) { TK_INT, "476" },
+                    (Token) { TK_ASSIGN, NULL },
+                        (Token) { TK_IDENT, "i" },
+                        (Token) { TK_INT, "10" },
+                    (Token) { TK_IDENT, "while" },
+                    (Token) { TK_OPEN, NULL },
+                        (Token) { TK_IDENT, "i" },
+                        (Token) { TK_IDENT, "seq" },
+                        (Token) { TK_OPEN, NULL },
+                            (Token) { TK_ASSIGN, NULL },
+                                (Token) { TK_IDENT, "i" },
+                                (Token) { TK_IDENT, "-" },
+                                (Token) { TK_OPEN, NULL },
+                                    (Token) { TK_IDENT, "i" },
+                                    (Token) { TK_INT, "1" },
+                                (Token) { TK_CLOSE, NULL },
+                            (Token) { TK_IDENT, "print" },
+                            (Token) { TK_OPEN, NULL },
+                                (Token) { TK_IDENT, "i" },
+                            (Token) { TK_CLOSE, NULL },
+                        (Token) { TK_CLOSE, NULL }, 
+                    (Token) { TK_CLOSE, NULL },
                 (Token) { TK_CLOSE, NULL },
             (Token) { TK_END, NULL },
-
-        (Token) { TK_ASSIGN, NULL },
-        (Token) { TK_IDENT, "function1" },
-            (Token) { TK_FUNCTION, NULL },
-            (Token) { TK_IDENT, "int" },
-            (Token) { TK_OPEN, NULL },
-                (Token) { TK_IDENT, "int" },
-                (Token) { TK_IDENT, "x" },
-            (Token) { TK_CLOSE, NULL },
-            (Token) { TK_BEGIN, NULL },
-                (Token) { TK_IDENT, "global_variable_A" },
-            (Token) { TK_END, NULL },
-        (Token) { TK_ASSIGN, NULL },
-
-        (Token) { TK_IDENT, "global_variable_A" },
-            (Token) { TK_INT, "35" },
 
         (Token) { TK_EOF, NULL }
     };
