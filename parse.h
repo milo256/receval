@@ -6,7 +6,6 @@
 
 #include "builtin.h"
 #include "types.h"
-#include "macros.h"
 
 #define MAX_COLS 40
 
@@ -99,7 +98,7 @@ Token * tokenize(char * code) {
         if (!(char_token || isspace(ch))) {
             new_char();
             tlen++;
-            continue; /* continue scanning */
+            continue;
         }
 
         if (tlen) {

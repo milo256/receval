@@ -5,7 +5,6 @@
 
 #include "types.h"
 #include "parse.h"
-#include "macros.h"
 
 /* my z key is broken. sof = sizeof and b at the end of a
  * variable name means it's a size in (b)ytes */
