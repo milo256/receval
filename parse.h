@@ -48,16 +48,7 @@ int lstr_eq(LStr a, LStr b) {
     return a.len == b.len && !strncmp(a.chars, b.chars, MIN(a.len, b.len));
 }
 
-u32 get_token_class(LStr str) {
-    if (str.len == 0)
-        return TK_NONE;
-    if (str.len == 1) switch(str.chars[0]) {
-        case '=': return TK_ASSIGN;
-        case '(': return TK_OPEN;
-        case ')': return TK_CLOSE;
-        case '{': return TK_BEGIN;
-        case '}': return TK_END;
-    }
+u32 long_token_class(LStr str) {
     if (isdigit(str.chars[0]))
         return TK_INT;
     if (lstr_eq(str, LSTR("function")))
@@ -65,66 +56,109 @@ u32 get_token_class(LStr str) {
     return TK_IDENT;
 }
 
+u32 symbolic_token_class(LStr str) {
+    if (str.len == 1) switch(str.chars[0]) {
+        case '=': return TK_ASSIGN;
+        case '(': return TK_OPEN;
+        case ')': return TK_CLOSE;
+        case '{': return TK_CB_OPEN;
+        case '}': return TK_CB_CLOSE;
+        default: PANIC();
+    } else if (str.len == 2) {
+        if (str.chars[0] == '-' && str.chars[1] == '>')
+            return TK_ARROW;
+    }
+    PANIC();
+    return SATISFY_COMPILER;
+}
+
+void print_tokens(Token * tokens) {
+    while (tokens->class != TK_EOF) {
+        char * buf = malloc(tokens->val.len + 1);
+        buf[tokens->val.len] = 0;
+        strncpy(buf, tokens->val.chars, tokens->val.len);
+        printf("%d(%s)\n", tokens->class, buf);
+        free(buf);
+        tokens++;
+    }
+}
+
+/* by far the worst function */
 Token * tokenize(char * code) {
-#define push_token(chars, len) \
+#define push_token(class) \
     do { \
-        LStr m_token_str = { chars, len }; \
         if (++tokens_len > tokens_cap) { \
             tokens_cap *= 2; tokens = realloc(tokens, tokens_cap * sizeof(Token)); \
         } \
-        tokens[tokens_len-1] = (Token) { get_token_class(m_token_str), m_token_str, line, column - tlen }; \
+        tokens[tokens_len-1] = (Token) { class, token_str, line, ts - line_start }; \
     } while(0)
-#define new_char() \
-    if (code[ts + tlen] == '\n') { \
-        column = 0; \
-        line++; \
-    } else { \
-        column++; \
-    }
 
-    char char_tokens[] = "=(){}";
+    char char_tokens[] = "=(){}[]";
+
     u32 tokens_len = 0;
     u32 tokens_cap = 2;
     Token * tokens = malloc(tokens_cap * sizeof(Token));
 
     u32 line = 1;
-    u32 column = 0;
-    u32 ts = 0;
-    u32 tlen = 0;
+    u32 line_start = 0;
+    u32 ts = 0; /* token start */
+    u32 tlen = 0; /* token len */
     char ch;
+
+    LStr token_str;
 
     while ((ch = code[ts + tlen])) {
         bool char_token = strchr(char_tokens, ch);
-        if (!(char_token || isspace(ch))) {
-            new_char();
+        bool arrow = (ch == '-' && code[ts+tlen+1] == '>');
+        bool comment_start = (ch == '/' && code[ts+tlen+1] == '*');
+
+        if (!(comment_start || arrow || char_token || isspace(ch))) {
             tlen++;
             continue;
         }
-
+        if (ch == '\n') {
+            line++;
+            line_start = ts + tlen;
+        }
         if (tlen) {
             /* scanned a token */
-            push_token(&code[ts], tlen);
+            token_str = (LStr) { &code[ts], tlen };
+            push_token(long_token_class(token_str));
             ts += tlen;
             tlen = 0;
         }
         if (char_token) {
-            push_token(&code[ts], 1);
-            new_char();
+            token_str = (LStr) { &code[ts], 1 };
+            push_token(symbolic_token_class(token_str));
+            ts++;
+        }
+        if (arrow) {
+            token_str = (LStr) { &code[ts], 2 };
+            push_token(TK_ARROW);
             ts++;
         }
         if (!(tlen || char_token)) {
-            new_char();
             ts++;
+        }
+
+        if (comment_start) {
+            do {
+                if (ch == '\n') {
+                    line++;
+                    line_start = ts + tlen;
+                }
+                ts++;
+            } while ((ch = code[ts]) && !(ch == '*' && code[ts+1] == '/'));
+            ts += 2;
         }
     }
 
-    push_token("", 0);
-    tokens[tokens_len-1].class = TK_EOF;
+    token_str = (LStr) { &code[ts - 1], 1 };
+    push_token(TK_EOF);
 
     return tokens;
 }
 #undef push_token
-#undef new_char
 
 
 bool name_in(LStr name, Def * defs, u32 defs_len, u32 * out_index) {
@@ -228,11 +262,11 @@ void parse_expr(
             *(Literal *)(out_expr->expr) = literal;
             *out_next_token = &tokens[1];
             return;
-        } case TK_BEGIN: {
+        } case TK_CB_OPEN: {
             OpBuiltin op = (OpBuiltin) { .class = B_SEQ };
             Token * token_ptr = &tokens[1];
             parse_function_call_args(
-                TK_END, &token_ptr,
+                TK_CB_CLOSE, &token_ptr,
                 global_defs, globals_len, arg_defs, args_len,
                 local_defs, locals_len, locals_cap,
                 &op.args, &op.arg_typesb, &op.args_len, &op.argsb
@@ -390,9 +424,9 @@ TypeClass lstr_to_type_class(LStr str) {
 }
 
 int delim(Token * token) {
-    if (token->class == TK_OPEN || token->class == TK_BEGIN)
+    if (token->class == TK_OPEN || token->class == TK_CB_OPEN)
         return 1;
-    else if (token->class == TK_CLOSE || token->class == TK_END)
+    else if (token->class == TK_CLOSE || token->class == TK_CB_CLOSE)
         return -1;
     else return 0;
 }
@@ -413,6 +447,7 @@ void skip_to_end(Token ** token) {
 }
 
 /* returns 0 if successful, 1 if error */
+/* TODO: implement :P */
 int parse_type(Token ** token, Type * out_type) {
     *out_type = (Type) { lstr_to_type_class((*token)->val), NULL, 0 };
     return 0;
@@ -479,6 +514,10 @@ void parse_global_def(Token ** tokens, Def ** global_defs, u32 * globals_len, u3
     token++;
     if (token->class == TK_FUNCTION) {
         type = (Type) { .class = TYPE_FN_PTR };
+        token++;
+        if (token->class != TK_ARROW)
+            error(token, "expected return type `-> <type>`");
+        
         token++;
         Type ret_type;
         if (parse_type(&token, &ret_type))

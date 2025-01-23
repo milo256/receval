@@ -1,5 +1,7 @@
 #pragma once
 
+#define SATISFY_COMPILER 69420
+
 #define MAX(A,B) ((A > B) ? A : B)
 #define MIN(A,B) ((A > B) ? B : A)
 
@@ -64,13 +66,18 @@ typedef struct {
 /* -- TOKENS -- */
 typedef enum {
     TK_INT,
+    TK_FLOAT,
+    TK_STRING,
     TK_FUNCTION,
+    TK_ARROW,
     TK_IDENT,
     TK_ASSIGN,
     TK_OPEN,
-    TK_CLOSE,
-    TK_BEGIN,
-    TK_END,
+    TK_CLOSE, 
+    TK_SB_OPEN,
+    TK_SB_CLOSE,
+    TK_CB_OPEN,
+    TK_CB_CLOSE,
     TK_EOF,
     TK_NONE
 } TkClass;

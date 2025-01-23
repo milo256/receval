@@ -105,6 +105,7 @@ int main(int argc, char * argv[]) {
     void * globals;
     Function * main_fn;
     Token * tokens = tokenize(code);
+    //print_tokens(tokens);
     parse_tokens(&tokens, &globals, &main_fn);
     int ret = eval_main(main_fn, globals);
     printf("%d\n",ret);
