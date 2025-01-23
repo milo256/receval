@@ -43,8 +43,7 @@ void eval_builtin(
                     case B_DIV_I: *(Integer *)ret_ptr = lhs / rhs; break;
                     default: PANIC();
                 }
-            } else
-                PANIC();
+            } else PANIC();
             break;
         case B_IF:
             ASSERT(args_len > 1 && args_len < 4);

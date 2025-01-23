@@ -12,6 +12,10 @@
 
 #define sof sizeof
 
+Type * ret_type(Type * function) {
+    return &function->args[0];
+}
+
 void error(Token * tk, char * msg) {
     fprintf(stderr, "Receval: Error on %d:%d: %s\n", tk->dbug_line, tk->dbug_column, msg);
     char * at = tk->val.chars;
@@ -294,7 +298,7 @@ void parse_expr(
             *out_expr = (Expr) { OP_CALL, malloc(sof(OpCall)) };
             *(OpCall *)(out_expr->expr) = call;
 
-            *out_ret_type = *var_type.ret_type;
+            *out_ret_type = *ret_type(&var_type);
             *out_next_token = &token_ptr[1];
 
             return;
@@ -376,14 +380,14 @@ Function parse_function_code(
     );
 
     fn.localsb = locals_len ? local_defs[locals_len - 1].offset + sof_type[local_defs[locals_len - 1].type.class] : 0;
-    if (out_type) (*out_type = (Type) { .class = TYPE_FN_PTR, .ret_type = ret_type });
+    if (out_type) (*out_type = (Type) { .class = TYPE_FN_PTR, .args = NULL }); /* TODO: ARGS */
     return fn;
 }
 
-Type lstr_to_type(LStr str) {
+TypeClass lstr_to_type_class(LStr str) {
     if (lstr_eq(str, LSTR("int")))
-        return (Type) { .class = TYPE_INT };
-    else return (Type) { .class = TYPE_NONE };
+        return TYPE_INT;
+    else return TYPE_NONE;
 }
 
 int delim(Token * token) {
@@ -409,6 +413,12 @@ void skip_to_end(Token ** token) {
     }
 }
 
+/* returns 0 if successful, 1 if error */
+int parse_type(Token ** token, Type * out_type) {
+    *out_type = (Type) { lstr_to_type_class((*token)->val), NULL, 0 };
+    return 0;
+}
+
 void parse_function_def(
     Token * token,
     Def ** out_arg_defs, u32 * out_args_len,
@@ -423,8 +433,8 @@ void parse_function_def(
     token++;
     while (token->class != TK_CLOSE) {
 
-        Type type = lstr_to_type(token->val);
-        if (token->class != TK_IDENT || type.class == TYPE_NONE)
+        Type type;
+        if (parse_type(&token, &type))
             error(token, "expected type annotation");
 
         if (token[1].class != TK_IDENT)
@@ -469,21 +479,45 @@ void parse_global_def(Token ** tokens, Def ** global_defs, u32 * globals_len, u3
     Token * init_token;
     token++;
     if (token->class == TK_FUNCTION) {
-        type = (Type) {
-            .class = TYPE_FN_PTR,
-            .ret_type = malloc(sof(Type))
-        };
+        type = (Type) { .class = TYPE_FN_PTR };
         token++;
-        Type ret_type = lstr_to_type(token->val);
-        if (token->class != TK_IDENT || ret_type.class == TYPE_NONE)
+        Type ret_type;
+        if (parse_type(&token, &ret_type))
             error(token, "expected type annotation");
-        *(type.ret_type) = ret_type;
+
+        type.args_len = 1;
+        u32 type_args_cap = 2;
+        type.args = malloc(type_args_cap * sizeof(Type));
+
+        type.args[0] = ret_type;
 
         token++;
         init_token = token;
+
         if (token->class != TK_OPEN)
             error(token, "expected function arguments list `(...)`");
-        skip_to_end(&token);
+
+        token++;
+
+        while (token->class != TK_CLOSE) {
+            ASSERT(token->class != TK_EOF);
+            Type arg_type;
+            if (parse_type(&token, &arg_type))
+                error(token, "expected type annotation");
+
+            if (++type.args_len > type_args_cap) {
+                type_args_cap *= 2;
+                type.args = realloc(type.args, type_args_cap * sizeof(Type));
+            }
+
+            type.args[type.args_len-1] = arg_type;
+
+            token++;
+            if (token->class != TK_IDENT)
+                error(token, "expected argument name");
+            token++;
+        }
+        token++;
         skip_to_end(&token);
     } else if (token->class == TK_INT) {
         type = (Type) { TYPE_INT };

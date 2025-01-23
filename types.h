@@ -17,6 +17,7 @@ typedef struct {
 
 #define LSTR(cstr) (LStr) { .chars = cstr, .len = strlen(cstr) }
 
+
 /* -- TYPES -- */
 /* Note: receval does not have classes. the word "class" anywhere in this codebase just means "kind" or "category",
  * and does not have anything to do with the programming language construct. TypeClass refers to the overall type.
@@ -30,7 +31,9 @@ typedef enum {
 
 typedef struct Type {
     TypeClass class;
-    union { struct Type * ret_type; };
+    struct Type * args; /* type arguments of type. A function's return type is its type's first
+                         * argument and the types of its arguments follow. (do you follow?) */
+    u32 args_len;
 } Type;
 
 /* we don't need ident because ident is just offset + location,
@@ -91,10 +94,8 @@ typedef struct {
 } Expr;
 
 typedef struct { u32 localsb; Expr body; } Function;
-
 typedef struct { Ident ident; } OpVar;
 typedef struct { Ident ident; Expr val; u32 size; } OpAssign;
-
 typedef struct { void * val; } Literal;
 
 typedef struct {
