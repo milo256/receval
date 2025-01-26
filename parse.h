@@ -12,7 +12,44 @@
 #define sof sizeof
 
 Type * ret_type(Type * function) {
-    return &function->args[0];
+    ASSERT(function->class == TYPE_FN_PTR);
+    return &((FunctionTypeData *) function->data)->ret_type;
+}
+
+Type * get_arg_types(Type * function) {
+    ASSERT(function->class == TYPE_FN_PTR);
+    return (Type *) ((void *) function->data + sizeof(FunctionTypeData));
+}
+
+u32 get_args_len(Type * function) {
+    ASSERT(function->class == TYPE_FN_PTR);
+    return ((FunctionTypeData *) function->data)->args_len;
+}
+
+Type type_function_ptr(Type ret_type) {
+    FunctionTypeData data = {
+        .ret_type = ret_type,
+        .args_len = 0,
+        .args_cap = 10
+    };
+    void * ptr = malloc(sizeof(FunctionTypeData) + data.args_cap * sizeof(Type));
+    *(FunctionTypeData *)ptr = data;
+    return (Type) {
+        .class = TYPE_FN_PTR,
+        .data = ptr
+    };
+}
+
+void arg_type_push(Type * function, Type arg_type) {
+    ASSERT(function->class == TYPE_FN_PTR);
+    FunctionTypeData * data = (FunctionTypeData *) function->data;
+
+    if (++(data->args_len) > data->args_cap) {
+        data->args_cap *= 2;
+        function->data = realloc(function->data, sizeof(FunctionTypeData) + data->args_cap * sizeof(Type));
+    }
+    Type * types = (void *) function->data + sizeof(FunctionTypeData);
+    types[data->args_len - 1] = arg_type;
 }
 
 void error(Token * tk, char * msg) {
@@ -230,8 +267,7 @@ bool parse_var(
 
 BuiltinClass lstr_to_builtin(LStr str) {
     for (BuiltinClass i = 0; i < ARRLEN(builtin_names); i++) {
-        if (lstr_eq(str, LSTR(builtin_names[i])))
-            return i;
+        if (lstr_eq(str, LSTR(builtin_names[i]))) return i;
     }
     return B_NONE;
 }
@@ -413,31 +449,28 @@ Function parse_function_code(
     );
 
     fn.localsb = locals_len ? local_defs[locals_len - 1].offset + sof_type[local_defs[locals_len - 1].type.class] : 0;
-    if (out_type) (*out_type = (Type) { .class = TYPE_FN_PTR, .args = NULL }); /* TODO: ARGS */
+    if (out_type) (*out_type = (Type) { .class = TYPE_FN_PTR, .data = NULL }); /* TODO: ARGS */
     return fn;
 }
 
 TypeClass lstr_to_type_class(LStr str) {
-    if (lstr_eq(str, LSTR("int")))
-        return TYPE_INT;
+    if (lstr_eq(str, LSTR("int"))) return TYPE_INT;
     else return TYPE_NONE;
 }
 
 int delim(Token * token) {
-    if (token->class == TK_OPEN || token->class == TK_CB_OPEN)
-        return 1;
-    else if (token->class == TK_CLOSE || token->class == TK_CB_CLOSE)
-        return -1;
+    if (token->class == TK_OPEN || token->class == TK_CB_OPEN) return 1;
+    else if (token->class == TK_CLOSE || token->class == TK_CB_CLOSE) return -1;
     else return 0;
 }
 
 /* TODO: doesn't work for assignments not within a function call */
 void skip_to_end(Token ** token) {
     Token * starting_token = *token;
-    if (delim(*token) < 1)
+    if (delim(*token) < 1) {
         (*token)++;
-    if (delim(*token) < 1)
-        return;
+        if (delim(*token) < 1) return;
+    }
     (*token)++;
     for (u32 d = 1; d;) {
         if ((*token)->class == TK_EOF) error(starting_token, "missing closing delimiter");
@@ -449,113 +482,75 @@ void skip_to_end(Token ** token) {
 /* returns 0 if successful, 1 if error */
 /* TODO: implement :P */
 int parse_type(Token ** token, Type * out_type) {
-    *out_type = (Type) { lstr_to_type_class((*token)->val), NULL, 0 };
+    *out_type = (Type) { lstr_to_type_class((*token)->val), NULL };
     return 0;
 }
 
-void parse_function_def(
-    Token * token,
-    Def ** out_arg_defs, u32 * out_args_len,
-    Token ** out_function_code, Token ** out_next_token
+void get_arg_defs(
+    Def * function_def, Def ** out_arg_defs
 ) {
-    u32 args_len = 0, arg_offset = 0, args_cap = 2;
-    Def * arg_defs = malloc(sof(Def) * args_cap);
+    ASSERT(function_def->type.class == TYPE_FN_PTR);
+    u32 args_len = get_args_len(&function_def->type);
+    Type * types = get_arg_types(&function_def->type);
+    LStr * names = function_def->arg_names;
+    *out_arg_defs = malloc(sizeof(Def) * args_len);
 
-    /* earlier stages in the parser should have already picked up on
-     * missing or unpaired parenthesis */
-    ASSERT(token->class == TK_OPEN);
-    token++;
-    while (token->class != TK_CLOSE) {
-
-        Type type;
-        if (parse_type(&token, &type))
-            error(token, "expected type annotation");
-
-        if (token[1].class != TK_IDENT)
-            error(&token[1], "expected identifier");
-
-        LStr name = token[1].val;
-
-        arg_defs[args_len] = (Def) {
-            .name = name,
-            .type = type,
-            .offset = arg_offset,
-            .init = NULL,
-        };
-        arg_offset += sof_type[type.class];
-        args_len++;
-        token++; token++;
-    }
-    *out_arg_defs = arg_defs;
-    *out_args_len = args_len;
-
-    ASSERT(token->class == TK_CLOSE); token++;
+    u32 arg_offset = 0;
     
-    if (out_function_code) *out_function_code = token;
-
-    skip_to_end(&token);
-
-    if (out_next_token) *out_next_token = token;
+    for (u32 i = 0; i < args_len; i++) {
+        (*out_arg_defs)[i] = (Def) {
+            .name = names[i], .type = types[i],
+            .offset = arg_offset, .init = NULL,
+        };
+        arg_offset += sof_type[types[i].class];
+    } 
 }
 
 void parse_global_def(Token ** tokens, Def ** global_defs, u32 * globals_len, u32 * globalsb, u32 * globals_cap) {
     Token * token = *tokens;
-    if (token->class != TK_ASSIGN)
-        error(token, "expected global variable definition");
+    if (token->class != TK_ASSIGN) error(token, "expected global variable definition");
     token++;
-    if (token->class != TK_IDENT)
-        error(token, "expected identifier");
+    if (token->class != TK_IDENT) error(token, "expected identifier");
 
     LStr var_name = token->val;
-
     Type type;
+
+    LStr * arg_names = NULL;
     
     Token * init_token;
     token++;
     if (token->class == TK_FUNCTION) {
-        type = (Type) { .class = TYPE_FN_PTR };
         token++;
-        if (token->class != TK_ARROW)
-            error(token, "expected return type `-> <type>`");
+        if (token->class != TK_ARROW) error(token, "expected return type `-> <type>`");
         
         token++;
         Type ret_type;
-        if (parse_type(&token, &ret_type))
-            error(token, "expected type annotation");
+        if (parse_type(&token, &ret_type)) error(token, "expected type annotation");
 
-        type.args_len = 1;
-        u32 type_args_cap = 2;
-        type.args = malloc(type_args_cap * sizeof(Type));
-
-        type.args[0] = ret_type;
+        type = type_function_ptr(ret_type); 
 
         token++;
-        init_token = token;
 
-        if (token->class != TK_OPEN)
-            error(token, "expected function arguments list `(...)`");
+        if (token->class != TK_OPEN) error(token, "expected function arguments list `(...)`");
 
         token++;
+        
+        u32 arg_names_len = 0;
+        u32 arg_names_cap = 2;
+        arg_names = malloc(arg_names_cap * sizeof(LStr));
 
         while (token->class != TK_CLOSE) {
             ASSERT(token->class != TK_EOF);
             Type arg_type;
-            if (parse_type(&token, &arg_type))
-                error(token, "expected type annotation");
-
-            if (++type.args_len > type_args_cap) {
-                type_args_cap *= 2;
-                type.args = realloc(type.args, type_args_cap * sizeof(Type));
-            }
-
-            type.args[type.args_len-1] = arg_type;
-
+            if (parse_type(&token, &arg_type)) error(token, "expected type annotation");
+            arg_type_push(&type, arg_type);
             token++;
-            if (token->class != TK_IDENT)
-                error(token, "expected argument name");
+            if (token->class != TK_IDENT) error(token, "expected argument name");
+            ARRPUSH(token->val, arg_names, arg_names_len, arg_names_cap);
             token++;
         }
         token++;
+        init_token = token;
         skip_to_end(&token);
     } else if (token->class == TK_INT) {
         type = (Type) { TYPE_INT };
@@ -563,54 +558,42 @@ void parse_global_def(Token ** tokens, Def ** global_defs, u32 * globals_len, u3
         token++;
     } else error(token, "value expected for global definition");
     
-    if (*globals_len >= *globals_cap) {
-        if (*globals_cap == 0) {
-            *globals_cap = 2;
-            *global_defs = malloc(*globals_cap * sof(Def));
-        }
-        else {
-            *globals_cap *= 2;
-            *global_defs = realloc(*global_defs, *globals_cap * sof(Def)); 
-        }
-    }
-    (*global_defs)[*globals_len] = (Def) {
-        .name = var_name,
-        .offset = *globalsb,
-        .type = type,
-        .init = init_token
+    Def def = (Def) {
+        .name = var_name, .offset = *globalsb,
+        .type = type, .init = init_token, .arg_names = arg_names
     };
-    (*globals_len)++;
+    ARRPUSH(def, *global_defs, *globals_len, *globals_cap);
     *globalsb += sof_type[type.class];
     *tokens = token;
 }
 
 void parse_tokens(Token ** tokens, void ** out_globals, Function ** out_main) {
-    u32 globals_len = 0, globalsb = 0, globals_cap = 0;
-    Def * global_defs;
+    u32 globals_len = 0, globalsb = 0, globals_cap = 2;
+    Def * global_defs = malloc(globals_cap * sizeof(Def));
     *out_main = NULL;
 
-    while((*tokens)->class != TK_EOF) {
+    while((*tokens)->class != TK_EOF)
         parse_global_def(tokens, &global_defs, &globals_len, &globalsb, &globals_cap);
-    }
     
     void * globals = malloc(globalsb);
 
     for (u32 i = 0; i < globals_len; i++) {
-        Def def = global_defs[i];
+        Def * def = &global_defs[i];
         Def * arg_defs;
-        u32 args_len;
-        Token * function_body;
-        switch (def.type.class) {
+        switch (def->type.class) {
             case TYPE_FN_PTR:
-                parse_function_def(def.init, &arg_defs, &args_len, &function_body, NULL);
+                get_arg_defs(def, &arg_defs);
                 Function * fn = malloc(sof(Function));
-                *fn = parse_function_code(function_body, global_defs, globals_len, arg_defs, args_len, NULL); 
-                *(Function **)(globals + def.offset) = fn;
-                if (lstr_eq(def.name, LSTR("main"))) *out_main = fn;
+                *fn = parse_function_code(
+                        def->init, global_defs, globals_len,
+                        arg_defs, get_args_len(&def->type), NULL
+                ); 
+                *(Function **)(globals + def->offset) = fn;
+                if (lstr_eq(def->name, LSTR("main"))) *out_main = fn;
                 break;
             case TYPE_INT:
-                ASSERT(((Token *)def.init)->class == TK_INT);
-                *(Integer *)(globals + def.offset) = lstr_to_int(((Token*)def.init)->val);
+                ASSERT(((Token *)def->init)->class == TK_INT);
+                *(Integer *)(globals + def->offset) = lstr_to_int(((Token*)def->init)->val);
                 break;
             default: PANIC();
         }

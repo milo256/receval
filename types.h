@@ -17,6 +17,11 @@
 
 #define ARRLEN(A) (sof(A)/sof(A[0]))
 
+#define ARRPUSH(item, array, len, cap) do { \
+    if (++(len) > (cap)) { \
+        (cap) *= 2; (array) = realloc((array), (cap) * sizeof((item))); \
+    } (array)[len-1] = (item); } while(0)
+
 typedef unsigned int u32;
 typedef int i32;
 
@@ -41,17 +46,23 @@ typedef struct {
  * e.g. Function pointers are TypeClass `TYPE_FN_PTR` but Type `{ TYPE_FN_PTR, <return_type> }`
  */
 typedef enum {
-    TYPE_INT,
+    TYPE_DBG,
     TYPE_FN_PTR,
+    TYPE_INT,
     TYPE_NONE
 } TypeClass;
 
 typedef struct Type {
     TypeClass class;
-    struct Type * args; /* type arguments of type. A function's return type is its type's first
-                         * argument and the types of its arguments follow. (do you follow?) */
-    u32 args_len;
+    void * data;
 } Type;
+
+typedef struct {
+    Type ret_type;
+    u32 args_len;    
+    u32 args_cap;
+    /* and then args array is stored immediately after this in memory (trust) */
+}  FunctionTypeData;
 
 /* we don't need ident because ident is just offset + location,
  * and location is which array the def is stored in */
@@ -61,6 +72,7 @@ typedef struct {
     u32 offset;
     void * init; /* location of the initialiser in code. only used for static
                    * variables since they're initialised prior to code execution. */
+    LStr * arg_names; /* only used for functions */
 } Def;
 
 /* -- TOKENS -- */
@@ -116,6 +128,7 @@ typedef struct {
 } Expr;
 
 typedef struct { u32 localsb; Expr body; } Function;
+
 typedef struct { Ident ident; } OpVar;
 typedef struct { Ident ident; Expr val; u32 size; } OpAssign;
 typedef struct { void * val; } Literal;
