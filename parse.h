@@ -40,6 +40,28 @@ Type type_function_ptr(Type ret_type) {
     };
 }
 
+bool type_eq(Type * a, Type * b) {
+    if (a->class != b->class) return false;
+    if (a == b) return true;
+    switch (a->class) {
+        case TYPE_INT: return true;
+        case TYPE_FN_PTR: {
+            u32 alen = get_args_len(a);
+            u32 blen = get_args_len(b);
+            if (alen != blen) return false;
+            Type * atypes = get_arg_types(a);
+            Type * btypes = get_arg_types(b);
+            for (u32 i = 0; i < alen; i++) {
+                if (!type_eq(&atypes[i], &btypes[i]))
+                    return false;
+            }
+            return true;
+        }
+        default: PANIC();
+    }
+    return SATISFY_COMPILER;
+}
+
 void arg_type_push(Type * function, Type arg_type) {
     ASSERT(function->class == TYPE_FN_PTR);
     FunctionTypeData * data = (FunctionTypeData *) function->data;
@@ -355,6 +377,7 @@ void parse_expr(
                 error(&tokens[1], "not a function");
 
             OpCall call = (OpCall) { .fn = var_expr };
+
             
             Token * token_ptr = &tokens[2];
             parse_function_call_args(
@@ -364,6 +387,12 @@ void parse_expr(
                 &call.args, &call.arg_typesb, &call.args_len, &call.argsb
             );
             
+            //Type * expected_arg_types = get_arg_types(&var_type);
+            u32 expected_args_len = get_args_len(&var_type);
+
+            if (expected_args_len != call.args_len)
+                error(&tokens[2], "incorrect number of arguments provided");
+
             *out_expr = (Expr) { OP_CALL, malloc(sof(OpCall)) };
             *(OpCall *)(out_expr->expr) = call;
 
@@ -486,9 +515,7 @@ int parse_type(Token ** token, Type * out_type) {
     return 0;
 }
 
-void get_arg_defs(
-    Def * function_def, Def ** out_arg_defs
-) {
+void get_arg_defs(Def * function_def, Def ** out_arg_defs) {
     ASSERT(function_def->type.class == TYPE_FN_PTR);
     u32 args_len = get_args_len(&function_def->type);
     Type * types = get_arg_types(&function_def->type);
@@ -553,7 +580,7 @@ void parse_global_def(Token ** tokens, Def ** global_defs, u32 * globals_len, u3
         init_token = token;
         skip_to_end(&token);
     } else if (token->class == TK_INT) {
-        type = (Type) { TYPE_INT };
+        type = (Type) { .class = TYPE_INT };
         init_token = token;
         token++;
     } else error(token, "value expected for global definition");
@@ -585,8 +612,8 @@ void parse_tokens(Token ** tokens, void ** out_globals, Function ** out_main) {
                 get_arg_defs(def, &arg_defs);
                 Function * fn = malloc(sof(Function));
                 *fn = parse_function_code(
-                        def->init, global_defs, globals_len,
-                        arg_defs, get_args_len(&def->type), NULL
+                    def->init, global_defs, globals_len,
+                    arg_defs, get_args_len(&def->type), NULL
                 ); 
                 *(Function **)(globals + def->offset) = fn;
                 if (lstr_eq(def->name, LSTR("main"))) *out_main = fn;

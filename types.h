@@ -46,10 +46,9 @@ typedef struct {
  * e.g. Function pointers are TypeClass `TYPE_FN_PTR` but Type `{ TYPE_FN_PTR, <return_type> }`
  */
 typedef enum {
-    TYPE_DBG,
+    TYPE_NONE,
     TYPE_FN_PTR,
-    TYPE_INT,
-    TYPE_NONE
+    TYPE_INT
 } TypeClass;
 
 typedef struct Type {
