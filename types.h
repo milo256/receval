@@ -39,66 +39,17 @@ typedef struct {
 
 #define LSTR(cstr) (LStr) { .chars = cstr, .len = strlen(cstr) }
 
-
-/* -- TYPES -- */
-/* Note: receval does not have classes. the word "class" anywhere in this codebase just means "kind" or "category",
- * and does not have anything to do with the programming language construct. TypeClass refers to the overall type.
- * e.g. Function pointers are TypeClass `TYPE_FN_PTR` but Type `{ TYPE_FN_PTR, <return_type> }`
- */
+/* -- RECEVAL TYPES -- */
 typedef enum {
     TYPE_NONE,
     TYPE_FN_PTR,
     TYPE_INT
 } TypeClass;
 
-typedef struct Type {
-    TypeClass class;
-    void * data;
-} Type;
-
-typedef struct {
-    Type ret_type;
-    u32 args_len;    
-    u32 args_cap;
-    /* and then args array is stored immediately after this in memory (trust) */
-}  FunctionTypeData;
-
-/* we don't need ident because ident is just offset + location,
- * and location is which array the def is stored in */
-typedef struct {
-    LStr name;
-    Type type;
-    u32 offset;
-    void * init; /* location of the initialiser in code. only used for static
-                   * variables since they're initialised prior to code execution. */
-    LStr * arg_names; /* only used for functions */
-} Def;
-
-/* -- TOKENS -- */
-typedef enum {
-    TK_INT,
-    TK_FLOAT,
-    TK_STRING,
-    TK_FUNCTION,
-    TK_ARROW,
-    TK_IDENT,
-    TK_ASSIGN,
-    TK_OPEN,
-    TK_CLOSE, 
-    TK_SB_OPEN,
-    TK_SB_CLOSE,
-    TK_CB_OPEN,
-    TK_CB_CLOSE,
-    TK_EOF,
-    TK_NONE
-} TkClass;
-
-typedef struct {
-    TkClass class;
-    LStr val;
-    u32 dbug_line;
-    u32 dbug_column;
-} Token;
+static u32 sof_type[] = {
+    [TYPE_INT] = sizeof(Integer),
+    [TYPE_FN_PTR] = sizeof(void *)
+};
 
 /* -- EXPRESSIONS --*/
 typedef enum {
@@ -148,7 +99,3 @@ typedef struct {
     u32 argsb;
 } OpCall;
 
-static u32 sof_type[] = {
-    [TYPE_INT] = sizeof(Integer),
-    [TYPE_FN_PTR] = sizeof(Function *)
-};

@@ -5,6 +5,7 @@
 
 #include "types.h"
 #include "parse.h"
+#include "builtin.h"
 
 /* my z key is broken. sof = sizeof and b at the end of a
  * variable name means it's a size in (b)ytes */
@@ -104,9 +105,7 @@ int main(int argc, char * argv[]) {
 
     void * globals;
     Function * main_fn;
-    Token * tokens = tokenize(code);
-    //print_tokens(tokens);
-    parse_tokens(&tokens, &globals, &main_fn);
+    parse_code(code, &globals, &main_fn);
     int ret = eval_main(main_fn, globals);
     printf("%d\n",ret);
 }
