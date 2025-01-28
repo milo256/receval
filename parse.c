@@ -302,19 +302,17 @@ void parse_function_call_args(
     TkClass close,
     Token ** token_ptr, Def * global_defs, u32 globals_len, Def * outer_arg_defs,
     u32 outer_args_len, Def ** local_defs, u32 * locals_len, u32 * locals_cap,
-    Expr ** out_args, u32 ** out_arg_typesb, u32 * out_args_len, u32 * out_argsb
+    Expr ** out_args, u32 * out_args_len, u32 * out_argsb
 ) {
     Expr * args;
-    u32 args_cap = 2, args_len = 0, argsb = 0, * arg_typesb;
+    u32 args_cap = 2, args_len = 0, argsb = 0;
 
     args = malloc(args_cap * sof(Expr));
-    arg_typesb = malloc(args_cap * sof(u32));
 
     while((**token_ptr).class != close) {
         if (args_len >= args_cap) {
             args_cap *= 2;
             args = realloc(args, args_cap * sof(Expr));
-            arg_typesb = realloc(arg_typesb, args_cap * sof(u32));
         }
         Type arg_type;
         parse_expr(
@@ -322,15 +320,13 @@ void parse_function_call_args(
             local_defs, locals_len, locals_cap,
             &args[args_len], &arg_type, token_ptr
         );
-        arg_typesb[args_len] = sof_type[arg_type.class];
-        argsb += arg_typesb[args_len];
+        argsb += sof_type[arg_type.class];
         args_len++;
     }
 
     *out_args = args;
-    *out_arg_typesb = arg_typesb;
-    *out_args_len = args_len;
     *out_argsb = argsb;
+    *out_args_len = args_len;
 }
 
 bool parse_var(
@@ -379,6 +375,7 @@ void parse_expr(
             *out_ret_type = (Type) { .class = TYPE_INT };
             *out_expr = (Expr) {
                 .class = LITERAL,
+                .ret_class = TYPE_INT,
                 .expr = malloc(sof(Literal))
             };
             Literal literal = (Literal) { .val = malloc(sof(Integer)) };
@@ -393,9 +390,9 @@ void parse_expr(
                 TK_CB_CLOSE, &token_ptr,
                 global_defs, globals_len, arg_defs, args_len,
                 local_defs, locals_len, locals_cap,
-                &op.args, &op.arg_typesb, &op.args_len, &op.argsb
+                &op.args, &op.args_len, &op.argsb
             );
-            *out_expr = (Expr) { OP_BUILTIN, malloc(sof(OpBuiltin)) };
+            *out_expr = (Expr) { OP_BUILTIN, TYPE_INT, malloc(sof(OpBuiltin)) };
             *out_ret_type = (Type) { .class = TYPE_INT };
             *(OpBuiltin *)(out_expr->expr) = op;
             *out_next_token = &token_ptr[1];
@@ -414,9 +411,10 @@ void parse_expr(
                     TK_CLOSE, &token_ptr,
                     global_defs, globals_len, arg_defs, args_len,
                     local_defs, locals_len, locals_cap,
-                    &op.args, &op.arg_typesb, &op.args_len, &op.argsb
+                    &op.args, &op.args_len, &op.argsb
                 );
-                *out_expr = (Expr) { OP_BUILTIN, malloc(sof(OpBuiltin)) };
+                /* TODO: figure out return types for builtins */
+                *out_expr = (Expr) { OP_BUILTIN, TYPE_INT, malloc(sof(OpBuiltin)) };
                 *out_ret_type = (Type) { .class = TYPE_INT };
                 *(OpBuiltin *)(out_expr->expr) = op;
                 *out_next_token = &token_ptr[1];
@@ -429,7 +427,7 @@ void parse_expr(
                 &var_type, &ident
             )) error(tokens, "unknown identifier");
 
-            Expr var_expr = (Expr) { .class = OP_VAR, .expr = malloc(sof(OpVar)) };
+            Expr var_expr = (Expr) { OP_VAR, var_type.class, malloc(sof(OpVar)) };
             *(OpVar *)(var_expr.expr) = (OpVar) { .ident = ident };
 
             if (tokens[1].class != TK_OPEN) {
@@ -450,7 +448,7 @@ void parse_expr(
                 TK_CLOSE, &token_ptr, 
                 global_defs, globals_len, arg_defs, args_len,
                 local_defs, locals_len, locals_cap,
-                &call.args, &call.arg_typesb, &call.args_len, &call.argsb
+                &call.args, &call.args_len, &call.argsb
             );
             
             //Type * expected_arg_types = get_arg_types(&var_type);
@@ -459,10 +457,11 @@ void parse_expr(
             if (expected_args_len != call.args_len)
                 error(&tokens[2], "incorrect number of arguments provided");
 
-            *out_expr = (Expr) { OP_CALL, malloc(sof(OpCall)) };
+            *out_ret_type = *ret_type(&var_type);
+
+            *out_expr = (Expr) { OP_CALL, out_ret_type->class, malloc(sof(OpCall)) };
             *(OpCall *)(out_expr->expr) = call;
 
-            *out_ret_type = *ret_type(&var_type);
             *out_next_token = &token_ptr[1];
 
             return;
@@ -507,14 +506,13 @@ void parse_expr(
                 (*locals_len)++;
             }
             /* should be deep comparison */
-            if (var_type.class != val_type.class)
+            if (!type_eq(&var_type, &val_type))
                 error(&tokens[2], "mismatched types");
 
-            Expr expr = (Expr) { OP_ASSIGN, malloc(sof(OpAssign)) };
+            Expr expr = (Expr) { OP_ASSIGN, var_type.class, malloc(sof(OpAssign)) };
             *(OpAssign*)expr.expr = (OpAssign) {
                 .ident = ident,
                 .val = val,
-                .size = sof_type[var_type.class]
             };
             *out_expr = expr;
             *out_ret_type = var_type;

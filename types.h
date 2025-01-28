@@ -1,6 +1,7 @@
 #pragma once
 
 #define SATISFY_COMPILER 69420
+#define TYPE_MAX_SIZE sizeof(void *)
 
 #define MAX(A,B) ((A > B) ? A : B)
 #define MIN(A,B) ((A > B) ? B : A)
@@ -40,6 +41,8 @@ typedef struct {
 #define LSTR(cstr) (LStr) { .chars = cstr, .len = strlen(cstr) }
 
 /* -- RECEVAL TYPES -- */
+/* TypeClass defines the type's size on the stack but does not
+ * include the full type information. see parse.c */
 typedef enum {
     TYPE_NONE,
     TYPE_FN_PTR,
@@ -50,6 +53,7 @@ static u32 sof_type[] = {
     [TYPE_INT] = sizeof(Integer),
     [TYPE_FN_PTR] = sizeof(void *)
 };
+
 
 /* -- EXPRESSIONS --*/
 typedef enum {
@@ -74,20 +78,20 @@ typedef enum {
 
 typedef struct {
     ExprClass class;
+    TypeClass ret_class;
     void * expr;
 } Expr;
 
 typedef struct { u32 localsb; Expr body; } Function;
 
 typedef struct { Ident ident; } OpVar;
-typedef struct { Ident ident; Expr val; u32 size; } OpAssign;
+typedef struct { Ident ident; Expr val; } OpAssign;
 typedef struct { void * val; } Literal;
 
 typedef struct {
     BuiltinClass class;
     Expr * args;
     u32 args_len;
-    u32 * arg_typesb;
     u32 argsb;
 } OpBuiltin;
 
@@ -95,7 +99,6 @@ typedef struct {
     Expr fn;
     Expr * args;
     u32 args_len;
-    u32 * arg_typesb;
     u32 argsb;
 } OpCall;
 
