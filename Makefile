@@ -1,7 +1,7 @@
 CC := gcc
 CFLAGS := -std=c99 -Wall -Wextra -g -O0
 LDFLAGS :=
-APP_NAME := receval2
+APP_NAME := receval
 
 SRCS := receval.c parse.c
 OBJS = $(patsubst %.c, %.o, $(SRCS))
