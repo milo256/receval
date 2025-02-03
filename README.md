@@ -56,20 +56,19 @@ Arguments are space separated, not comma separated.
 
 +(x 5)
 ```
-Declaring functions is similar to declaring variables
 
-following `->` is the return type, and
-inside of the parentesis is the list of arguments.
-Since there is no initial value to infer the type from, 
-function arguments need to be annotated with their type.
-
-Following the list of arguments is the function code itself,
-which must be a single expression.
-
+Declaring functions is similar to declaring variables:
 ```
 = calculate_area function -> int (int width int height)
     *(width height)
 ```
+Following `->` is the return type, and
+inside of the parentesis is the list of arguments.
+Since there is no initial value to infer the type from, 
+function arguments need to be annotated with their type. Following the list of arguments is the function code itself,
+which must be a single expression.
+
+
 
 Receval is not parsed line-by-line.
 
@@ -78,7 +77,7 @@ This means global variables and functions may be used "before" they are declared
 It also means that functions can only be called from inside of other
 functions.
 
-Execution starts at the main function.
+Execution starts by calling `main`.
 Main is a function that is called `main`, takes no arguments, and returns an int.
 
 ```
