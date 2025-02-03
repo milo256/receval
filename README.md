@@ -68,8 +68,6 @@ Since there is no initial value to infer the type from,
 function arguments need to be annotated with their type. Following the list of arguments is the function code itself,
 which must be a single expression.
 
-
-
 Receval is not parsed line-by-line.
 
 The entire file is parsed at once, and then run.
@@ -96,7 +94,7 @@ Main is a function that is called `main`, takes no arguments, and returns an int
 Many basic features of receval are implimented as built-in functions.
 For example, the simple act of running several lines of code, one after the other,
 is a builtin function, called `seq()`.
-Seq simply runs all of its arguments sequentially and then returns the last one.
+Seq simply evaluates all of its arguments sequentially and then returns the last one.
 
 Seq is so useful that curly braces (`{}`) are made shorthand for it.
 
@@ -113,12 +111,15 @@ Seq is so useful that curly braces (`{}`) are made shorthand for it.
 ```
 
 `while()` and `if()` can be used for control flow, much like other languages.
-While will call its second argument repeatedly until its first returns zero,
+
+While will evaluate its second argument repeatedly until its first returns zero,
 and returns the last value returned by its second argument.
-If will call its second argument if its first argument is not zero. If provided
-with a second argument, it will call that when the first argument is zero.
+
+If evaluates its second argument if its first argument is non-zero. When provided
+with a third argument, it will evaluate that when the first argument is zero.
 (like an else block in other languages).
 If returns zero if the first argument is zero and there is no second argument.
+Otherwise, it returns the value returned by the expression evaluated.
 
 ```
 
