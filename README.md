@@ -72,14 +72,17 @@ which must be a single expression.
 ```
 
 Receval is not parsed line-by-line.
+
 The entire file is parsed at once, and then run.
 This means global variables and functions may be used "before" they are declared.
 It also means that functions can only be called from inside of other
-functions. Execution starts in the main function
+functions.
+
+Execution starts at the main function.
+Main is a function that is called `main`, takes no arguments, and returns an int.
 
 ```
-/* yes, this works */
-
+/* code starts here */
 = main function -> int ()
     print_x()
 
@@ -92,7 +95,7 @@ functions. Execution starts in the main function
 ## Built-in functions
 
 Many basic features of receval are implimented as built-in functions.
-For example, the simple act of running several functions one after the other
+For example, the simple act of running several lines of code, one after the other,
 is a builtin function, called `seq()`.
 Seq simply runs all of its arguments sequentially and then returns the last one.
 
@@ -133,6 +136,7 @@ If returns zero if the first argument is zero and there is no second argument.
 ```
 
 Lastly, we have `print()` and the arithmentic operators `+()`, `-()`, `*()`, and `/()`.
-Print prints its argument, an int, on a new line.
+
+Print prints its argument, an int, to the console on a new line.
 
 The arithmetic operators perform their respective operations on two ints.
