@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <ctype.h>
 
+#include "da.h"
 #include "types.h"
 #include "parse.h"
 
@@ -296,12 +297,17 @@ bool name_in(LStr name, Def * defs, u32 defs_len, u32 * out_index) {
     return false;
 }
 
-void parse_expr(Token *, Def *, u32, Def *, u32, Def **, u32 *, u32 *, Expr *, Type *, Token **);
+void parse_expr(
+    Token * tokens,
+    Def * global_defs, u32 globals_len,
+    Def ** local_defs, u32 * locals_len, u32 * locals_cap,
+    Expr * out_expr, Type * out_ret_type, Token ** out_next_token
+);
 
 void parse_function_call_args(
     TkClass close,
-    Token ** token_ptr, Def * global_defs, u32 globals_len, Def * outer_arg_defs,
-    u32 outer_args_len, Def ** local_defs, u32 * locals_len, u32 * locals_cap,
+    Token ** token_ptr, Def * global_defs, u32 globals_len,
+    Def ** local_defs, u32 * locals_len, u32 * locals_cap,
     Expr ** out_args, u32 * out_args_len, u32 * out_argsb
 ) {
     Expr * args;
@@ -316,7 +322,7 @@ void parse_function_call_args(
         }
         Type arg_type;
         parse_expr(
-            *token_ptr, global_defs, globals_len, outer_arg_defs, outer_args_len,
+            *token_ptr, global_defs, globals_len,
             local_defs, locals_len, locals_cap,
             &args[args_len], &arg_type, token_ptr
         );
@@ -331,17 +337,14 @@ void parse_function_call_args(
 
 bool parse_var(
     LStr var_name,
-    Def * global_defs, u32 globals_len, Def * arg_defs,
-    u32 args_len, Def * local_defs, u32 locals_len,
+    Def * global_defs, u32 globals_len,
+    Def * local_defs, u32 locals_len,
     Type * out_type, Ident * out_ident
 ) {
     u32 var_index;
     if (name_in(var_name, local_defs, locals_len, &var_index)) {
         *out_type = local_defs[var_index].type;
         *out_ident = ident_new(LOCAL, local_defs[var_index].offset);
-    } else if (name_in(var_name, arg_defs, args_len, &var_index)) {
-        *out_type = arg_defs[var_index].type;
-        *out_ident = ident_new(ARGUMENT, arg_defs[var_index].offset);
     } else if (name_in(var_name, global_defs, globals_len, &var_index)) {
         *out_type = global_defs[var_index].type;
         *out_ident = ident_new(GLOBAL, global_defs[var_index].offset);
@@ -365,7 +368,7 @@ Integer lstr_to_int(LStr str) {
 
 void parse_expr(
     Token * tokens,
-    Def * global_defs, u32 globals_len, Def * arg_defs, u32 args_len,
+    Def * global_defs, u32 globals_len,
     Def ** local_defs, u32 * locals_len, u32 * locals_cap,
     Expr * out_expr, Type * out_ret_type, Token ** out_next_token
 ) {
@@ -388,7 +391,7 @@ void parse_expr(
             Token * token_ptr = &tokens[1];
             parse_function_call_args(
                 TK_CB_CLOSE, &token_ptr,
-                global_defs, globals_len, arg_defs, args_len,
+                global_defs, globals_len,
                 local_defs, locals_len, locals_cap,
                 &op.args, &op.args_len, &op.argsb
             );
@@ -409,7 +412,7 @@ void parse_expr(
                 Token * token_ptr = &tokens[2];
                 parse_function_call_args(
                     TK_CLOSE, &token_ptr,
-                    global_defs, globals_len, arg_defs, args_len,
+                    global_defs, globals_len,
                     local_defs, locals_len, locals_cap,
                     &op.args, &op.args_len, &op.argsb
                 );
@@ -421,9 +424,9 @@ void parse_expr(
                 return;
             }
 
-            if (!parse_var(
+            else if (!parse_var(
                 tokens[0].val,
-                global_defs, globals_len, arg_defs, args_len, *local_defs, *locals_len,
+                global_defs, globals_len, *local_defs, *locals_len,
                 &var_type, &ident
             )) error(tokens, "unknown identifier");
 
@@ -446,7 +449,7 @@ void parse_expr(
             Token * token_ptr = &tokens[2];
             parse_function_call_args(
                 TK_CLOSE, &token_ptr, 
-                global_defs, globals_len, arg_defs, args_len,
+                global_defs, globals_len,
                 local_defs, locals_len, locals_cap,
                 &call.args, &call.args_len, &call.argsb
             );
@@ -473,7 +476,7 @@ void parse_expr(
             Type val_type;
             parse_expr(
                 &tokens[2], 
-                global_defs, globals_len, arg_defs, args_len,
+                global_defs, globals_len,
                 local_defs, locals_len, locals_cap,
                 &val, &val_type, out_next_token
             );
@@ -483,7 +486,7 @@ void parse_expr(
 
             if (!parse_var(
                 tokens[1].val,
-                global_defs, globals_len, arg_defs, args_len, *local_defs, *locals_len,
+                global_defs, globals_len, *local_defs, *locals_len,
                 &var_type, &ident
             )) {
                 var_type = val_type;
@@ -524,19 +527,23 @@ void parse_expr(
 
 Function parse_function_code(
         Token * tokens,
-        Def * global_defs, u32 globals_len, Def * arg_defs, u32 args_len,
+        Def * global_defs, u32 globals_len,
+        Def * arg_defs, u32 args_len,
         Type * out_type
 ) {
     Function fn;
     Token * end_token;
     Type * ret_type = malloc(sof(Type));
 
-    u32 locals_len = 0, locals_cap = 2;
+    u32 locals_len, locals_cap = locals_len = args_len;
+    if (!locals_cap) locals_cap = 1;
     Def * local_defs = malloc(sof(Def) * locals_cap);
+
+    memcpy(local_defs, arg_defs, sof(Def) * locals_cap);
 
     parse_expr(
         tokens,
-        global_defs, globals_len, arg_defs, args_len,
+        global_defs, globals_len,
         &local_defs, &locals_len, &locals_cap,
         &fn.body, ret_type, &end_token
     );
