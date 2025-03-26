@@ -64,6 +64,8 @@ typedef struct {
     da(Def) locals;
 } Context;
 
+typedef da(Def) DefList;
+
 /* -- TOKENS -- */
 typedef enum {
     TK_INT,
@@ -304,7 +306,7 @@ void parse_function_call_args(
     TkClass close,
     Token ** token_ptr,
     Context * context,
-    Expr ** out_args, u32 * out_args_len, u32 * out_argsb
+    Expr ** out_args, u32 * out_args_len
 ) {
     Expr * args;
     u32 args_cap = 2, args_len = 0, argsb = 0;
@@ -326,7 +328,6 @@ void parse_function_call_args(
     }
 
     *out_args = args;
-    *out_argsb = argsb;
     *out_args_len = args_len;
 }
 
@@ -347,11 +348,15 @@ Ident add_local(Context * ctx, LStr name, Type type) {
     return ident;
 }
 
+#define defs_size(list) \
+        ((list).len ? (list).items[(list).len - 1].offset + sof_type[(list).items[(list).len - 1].type.class] : 0)
+
 u32 locals_size(Context ctx) {
     return ctx.locals.len ?
         ctx.locals.items[ctx.locals.len - 1].offset
         + sof_type[ctx.locals.items[ctx.locals.len - 1].type.class] : 0;
 }
+
 
 bool parse_var(
     LStr var_name,
@@ -407,7 +412,7 @@ void parse_expr(
             Token * token_ptr = &tokens[1];
             parse_function_call_args(
                 TK_CB_CLOSE, &token_ptr, context,
-                &op.args, &op.args_len, &op.argsb
+                &op.args, &op.args_len
             );
             *out_expr = (Expr) { OP_BUILTIN, TYPE_INT, malloc(sof(OpBuiltin)) };
             *out_ret_type = (Type) { .class = TYPE_INT };
@@ -426,7 +431,7 @@ void parse_expr(
                 Token * token_ptr = &tokens[2];
                 parse_function_call_args(
                     TK_CLOSE, &token_ptr, context,
-                    &op.args, &op.args_len, &op.argsb
+                    &op.args, &op.args_len
                 );
                 /* TODO: figure out return types for builtins */
                 *out_expr = (Expr) { OP_BUILTIN, TYPE_INT, malloc(sof(OpBuiltin)) };
@@ -460,7 +465,7 @@ void parse_expr(
             Token * token_ptr = &tokens[2];
             parse_function_call_args(
                 TK_CLOSE, &token_ptr, context,
-                &call.args, &call.args_len, &call.argsb
+                &call.args, &call.args_len
             );
             
             //Type * expected_arg_types = get_arg_types(&var_type);
@@ -540,7 +545,7 @@ Function parse_function_code(
         &fn.body, ret_type, &end_token
     );
 
-    fn.localsb = locals_size(ctx);
+    fn.localsb = defs_size(ctx.locals);
     if (out_type) (*out_type = (Type) { .class = TYPE_FN_PTR, .data = NULL }); /* TODO: ARGS */
     return fn;
 }
@@ -596,7 +601,7 @@ void get_arg_defs(Def * function_def, Def ** out_arg_defs) {
     } 
 }
 
-void parse_global_def(Token ** tokens, Def ** global_defs, u32 * globals_len, u32 * globalsb, u32 * globals_cap) {
+void parse_global_def(Token ** tokens, DefList * globals) {
     Token * token = *tokens;
     if (token->class != TK_ASSIGN) error(token, "expected global variable definition");
     token++;
@@ -625,9 +630,7 @@ void parse_global_def(Token ** tokens, Def ** global_defs, u32 * globals_len, u3
 
         token++;
         
-        u32 arg_names_len = 0;
-        u32 arg_names_cap = 2;
-        arg_names = malloc(arg_names_cap * sizeof(LStr));
+        da(LStr) arg_names_list = {};
 
         while (token->class != TK_CLOSE) {
             ASSERT(token->class != TK_EOF);
@@ -636,9 +639,12 @@ void parse_global_def(Token ** tokens, Def ** global_defs, u32 * globals_len, u3
             arg_type_push(&type, arg_type);
             token++;
             if (token->class != TK_IDENT) error(token, "expected argument name");
-            ARRPUSH(token->val, arg_names, arg_names_len, arg_names_cap);
+            da_append(arg_names_list, token->val);
             token++;
         }
+
+        arg_names = arg_names_list.items;
+
         token++;
         init_token = token;
         skip_to_end(&token);
@@ -649,33 +655,31 @@ void parse_global_def(Token ** tokens, Def ** global_defs, u32 * globals_len, u3
     } else error(token, "value expected for global definition");
     
     Def def = (Def) {
-        .name = var_name, .offset = *globalsb,
+        .name = var_name, .offset = defs_size(*globals),
         .type = type, .init = init_token, .arg_names = arg_names
     };
-    ARRPUSH(def, *global_defs, *globals_len, *globals_cap);
-    *globalsb += sof_type[type.class];
+    da_append(*globals, def);
     *tokens = token;
 }
 
 void parse_tokens(Token ** tokens, void ** out_globals, Function ** out_main) {
-    u32 globals_len = 0, globalsb = 0, globals_cap = 2;
-    Def * global_defs = malloc(globals_cap * sizeof(Def));
+    DefList global_defs = {};
     *out_main = NULL;
 
     while((*tokens)->class != TK_EOF)
-        parse_global_def(tokens, &global_defs, &globals_len, &globalsb, &globals_cap);
+        parse_global_def(tokens, &global_defs);
     
-    void * globals = malloc(globalsb);
+    void * globals = malloc(defs_size(global_defs));
 
-    for (u32 i = 0; i < globals_len; i++) {
-        Def * def = &global_defs[i];
+    for (u32 i = 0; i < global_defs.len; i++) {
+        Def * def = &global_defs.items[i];
         Def * arg_defs;
         switch (def->type.class) {
             case TYPE_FN_PTR:
                 get_arg_defs(def, &arg_defs);
                 Function * fn = malloc(sof(Function));
                 *fn = parse_function_code(
-                    def->init, global_defs, globals_len,
+                    def->init, global_defs.items, global_defs.len,
                     arg_defs, get_args_len(&def->type), NULL
                 ); 
                 *(Function **)(globals + def->offset) = fn;

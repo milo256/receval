@@ -18,11 +18,6 @@
 
 #define ARRLEN(A) (sof(A)/sof(A[0]))
 
-#define ARRPUSH(item, array, len, cap) do { \
-    if (++(len) > (cap)) { \
-        (cap) *= 2; (array) = realloc((array), (cap) * sizeof((item))); \
-    } (array)[len-1] = (item); } while(0)
-
 typedef unsigned int u32;
 typedef int i32;
 
@@ -31,7 +26,7 @@ typedef unsigned char u8;
 typedef i32 Integer;
 typedef u32 Ident;
 
-enum VarLocation { GLOBAL, LOCAL, ARGUMENT };
+enum VarLocation { GLOBAL, LOCAL };
 
 typedef struct {
     char * chars;
@@ -92,13 +87,11 @@ typedef struct {
     BuiltinClass class;
     Expr * args;
     u32 args_len;
-    u32 argsb;
 } OpBuiltin;
 
 typedef struct {
     Expr fn;
     Expr * args;
     u32 args_len;
-    u32 argsb;
 } OpCall;
 
