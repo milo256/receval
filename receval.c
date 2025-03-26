@@ -15,10 +15,10 @@
 const char DISCARD[TYPE_MAX_SIZE];
 
 void eval_function(Function *, void *, void *, void *);
-void eval_expr(Expr *, void *, void *, void *, void *);
+void eval_expr(Expr *, void *, void *, void *);
 
 void eval_builtin(
-    OpBuiltin * builtin, void * globals, void * locals, void * outer_args, void * ret_ptr
+    OpBuiltin * builtin, void * globals, void * locals, void * ret_ptr
 ) {
     Expr * args = builtin->args;
     u32 args_len = builtin->args_len;
@@ -29,8 +29,8 @@ void eval_builtin(
             ASSERT(args_len > 1);
             if (args_len == 2) {
                 Integer lhs, rhs;
-                eval_expr(args, globals, locals, outer_args, &lhs);
-                eval_expr(&args[1], globals, locals, outer_args, &rhs);
+                eval_expr(args, globals, locals, &lhs);
+                eval_expr(&args[1], globals, locals, &rhs);
                 switch (builtin->class) {
                     case B_ADD_I: *(Integer *)ret_ptr = lhs + rhs; break;
                     case B_SUB_I: *(Integer *)ret_ptr = lhs - rhs; break;
@@ -43,32 +43,32 @@ void eval_builtin(
         case B_IF:
             ASSERT(args_len > 1 && args_len < 4);
 
-            eval_expr(args, globals, locals, outer_args, &condition);
+            eval_expr(args, globals, locals, &condition);
             if (condition)
-                eval_expr(&args[1], globals, locals, outer_args, ret_ptr);
+                eval_expr(&args[1], globals, locals, ret_ptr);
             else if (args_len > 2)
-                eval_expr(&args[2], globals, locals, outer_args, ret_ptr);
+                eval_expr(&args[2], globals, locals, ret_ptr);
             else
                 memset(ret_ptr, 0, sizeof(Integer));
             break;
         case B_WHILE:
             ASSERT(args_len == 2);
             
-            eval_expr(args, globals, locals, outer_args, &condition);
+            eval_expr(args, globals, locals, &condition);
             while (condition) {
-                eval_expr(&args[1], globals, locals, outer_args, ret_ptr);
-                eval_expr(args, globals, locals, outer_args, &condition);
+                eval_expr(&args[1], globals, locals, ret_ptr);
+                eval_expr(args, globals, locals, &condition);
             }
             break;
         case B_SEQ:
             ASSERT(args_len > 0);
             for (u32 i = 0; i < args_len - 1; i++) {
-                eval_expr(&args[i], globals, locals, outer_args, ret_ptr);
+                eval_expr(&args[i], globals, locals, ret_ptr);
             }
-            eval_expr(&args[args_len-1], globals, locals, outer_args, ret_ptr);
+            eval_expr(&args[args_len-1], globals, locals, ret_ptr);
             break;
         case B_PRINT_I:
-            eval_expr(args, globals, locals, outer_args, ret_ptr);
+            eval_expr(args, globals, locals, ret_ptr);
             printf("%d\n", *((Integer *) ret_ptr));
             break;
             
@@ -79,8 +79,7 @@ void eval_builtin(
 
 /* args is args of containing function. effectively more locals */
 void eval_expr(
-    Expr * expr, void * globals, void * locals,
-    void * args, void * ret_ptr
+    Expr * expr, void * globals, void * locals, void * ret_ptr
 ) {
     Ident var;
     OpCall * call;
@@ -90,14 +89,14 @@ void eval_expr(
     switch (expr->class) {
         case OP_VAR: case OP_ASSIGN:
             var = OP_VAR ? ((OpVar *) expr->expr)->ident : ((OpAssign *) expr->expr)->ident;
-            void * loc_ptr[] = { [GLOBAL] = globals, [LOCAL] = locals, [ARGUMENT] = args };
+            void * loc_ptr[] = { [GLOBAL] = globals, [LOCAL] = locals };
             void * var_ptr = loc_ptr[var_location(var)] + var_offset(var);
             if (expr->class == OP_VAR) {
                 memcpy(ret_ptr, var_ptr, ret_size); 
             } else {
                 OpAssign * op = (OpAssign *) expr->expr;
                 eval_expr(
-                    &op->val, globals, locals, args,
+                    &op->val, globals, locals,
                     var_ptr
                 );
                 memcpy(ret_ptr, var_ptr, ret_size); 
@@ -105,27 +104,27 @@ void eval_expr(
             break;
         case OP_CALL:
             call = (OpCall *) expr->expr;
-            void * arg_vals = malloc(call->argsb);
-            void * arg_ptr = arg_vals;
-
             Function * fn;
-            eval_expr(&call->fn, globals, locals, args, &fn);
+            eval_expr(&call->fn, globals, locals, &fn);
+            
+            void * new_locals = malloc(fn->localsb);
+            void * arg_ptr = new_locals;
 
             for (u32 i = 0; i < call->args_len; i++) {
                 u32 arg_size = sof_type[call->args[i].ret_class];
                 eval_expr(
-                    &call->args[i], globals, locals, args,
+                    &call->args[i], globals, locals,
                     arg_ptr
                 );
                 arg_ptr += arg_size;
             }
-            eval_function(fn, globals, arg_vals, ret_ptr);
-            free(arg_vals);
+            eval_expr(&fn->body, globals, new_locals, ret_ptr);
+            free(new_locals);
             break;
         case OP_BUILTIN:
             builtin = (OpBuiltin *) expr->expr;
 
-            eval_builtin(builtin, globals, locals, args, ret_ptr);
+            eval_builtin(builtin, globals, locals, ret_ptr);
             break; 
         case LITERAL:
             lit = (Literal *) expr->expr;
@@ -136,18 +135,14 @@ void eval_expr(
     }
 }
 
-void eval_function(Function * fn, void * globals, void * args, void * ret_ptr) {
-    void * locals = malloc(fn->localsb);
-
-    eval_expr(&fn->body, globals, locals, args, ret_ptr);
-
-    free(locals); /* need to free each local individually when reference types are added */
-}
-
 int eval_main(Function * fn, void * globals) {
     void * ret_ptr = malloc(sof_type[TYPE_INT]);
-    eval_function(fn, globals, NULL, ret_ptr);
 
+    void * locals = malloc(fn->localsb);
+
+    eval_expr(&fn->body, globals, locals, ret_ptr);
+    
+    free(locals);
     int ret = *(int *)ret_ptr;
     free(ret_ptr);
     return ret;
