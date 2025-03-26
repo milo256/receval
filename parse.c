@@ -56,6 +56,14 @@ typedef struct {
     LStr * arg_names; /* only used for functions */
 } Def;
 
+typedef struct {
+    struct {
+        Def * items;
+        u32 len;
+    } globals;
+    da(Def) locals;
+} Context;
+
 /* -- TOKENS -- */
 typedef enum {
     TK_INT,
@@ -215,24 +223,13 @@ void print_tokens(Token * tokens) {
 
 /* by far the worst function */
 Token * tokenize(char * code) {
-#define push_token(class) \
-    do { \
-        if (++tokens_len > tokens_cap) { \
-            tokens_cap *= 2; tokens = realloc(tokens, tokens_cap * sizeof(Token)); \
-        } \
-        tokens[tokens_len-1] = (Token) { class, token_str, line, ts - line_start }; \
-    } while(0)
+#define make_token(class) (Token) { class, token_str, line, ts - line_start }
 
     char char_tokens[] = "=(){}[]";
 
-    u32 tokens_len = 0;
-    u32 tokens_cap = 2;
-    Token * tokens = malloc(tokens_cap * sizeof(Token));
+    da(Token) tokens;
 
-    u32 line = 1;
-    u32 line_start = 0;
-    u32 ts = 0; /* token start */
-    u32 tlen = 0; /* token len */
+    u32 line = 1, line_start = 0, ts = 0, tlen = 0;
     char ch;
 
     LStr token_str;
@@ -253,18 +250,18 @@ Token * tokenize(char * code) {
         if (tlen) {
             /* scanned a token */
             token_str = (LStr) { &code[ts], tlen };
-            push_token(long_token_class(token_str));
+            da_append(tokens, make_token(long_token_class(token_str)));
             ts += tlen;
             tlen = 0;
         }
         if (char_token) {
             token_str = (LStr) { &code[ts], 1 };
-            push_token(symbolic_token_class(token_str));
+            da_append(tokens, make_token(symbolic_token_class(token_str)));
             ts++;
         }
         if (arrow) {
             token_str = (LStr) { &code[ts], 2 };
-            push_token(TK_ARROW);
+            da_append(tokens, make_token(TK_ARROW));
             ts++;
         }
         if (!(tlen || char_token)) {
@@ -284,11 +281,11 @@ Token * tokenize(char * code) {
     }
 
     token_str = (LStr) { &code[ts - 1], 1 };
-    push_token(TK_EOF);
+    da_append(tokens, make_token(TK_EOF));
 
-    return tokens;
+    return tokens.items;
 }
-#undef push_token
+#undef make_tokens
 
 
 bool name_in(LStr name, Def * defs, u32 defs_len, u32 * out_index) {
@@ -298,16 +295,15 @@ bool name_in(LStr name, Def * defs, u32 defs_len, u32 * out_index) {
 }
 
 void parse_expr(
-    Token * tokens,
-    Def * global_defs, u32 globals_len,
-    Def ** local_defs, u32 * locals_len, u32 * locals_cap,
+    Token *const tokens,
+    Context * context,
     Expr * out_expr, Type * out_ret_type, Token ** out_next_token
 );
 
 void parse_function_call_args(
     TkClass close,
-    Token ** token_ptr, Def * global_defs, u32 globals_len,
-    Def ** local_defs, u32 * locals_len, u32 * locals_cap,
+    Token ** token_ptr,
+    Context * context,
     Expr ** out_args, u32 * out_args_len, u32 * out_argsb
 ) {
     Expr * args;
@@ -322,8 +318,7 @@ void parse_function_call_args(
         }
         Type arg_type;
         parse_expr(
-            *token_ptr, global_defs, globals_len,
-            local_defs, locals_len, locals_cap,
+            *token_ptr, context,
             &args[args_len], &arg_type, token_ptr
         );
         argsb += sof_type[arg_type.class];
@@ -335,19 +330,41 @@ void parse_function_call_args(
     *out_args_len = args_len;
 }
 
+Ident add_local(Context * ctx, LStr name, Type type) {
+    u32 offset = ctx->locals.len ?
+        ctx->locals.items[ctx->locals.len - 1].offset
+        + sof_type[ctx->locals.items[ctx->locals.len - 1].type.class] : 0;
+
+    Ident ident = ident_new(LOCAL, offset);
+
+    Def def = {
+        .name = name,
+        .offset = var_offset(ident),
+        .type = type
+    };
+
+    da_append(ctx->locals, def);
+    return ident;
+}
+
+u32 locals_size(Context ctx) {
+    return ctx.locals.len ?
+        ctx.locals.items[ctx.locals.len - 1].offset
+        + sof_type[ctx.locals.items[ctx.locals.len - 1].type.class] : 0;
+}
+
 bool parse_var(
     LStr var_name,
-    Def * global_defs, u32 globals_len,
-    Def * local_defs, u32 locals_len,
+    Context context,
     Type * out_type, Ident * out_ident
 ) {
     u32 var_index;
-    if (name_in(var_name, local_defs, locals_len, &var_index)) {
-        *out_type = local_defs[var_index].type;
-        *out_ident = ident_new(LOCAL, local_defs[var_index].offset);
-    } else if (name_in(var_name, global_defs, globals_len, &var_index)) {
-        *out_type = global_defs[var_index].type;
-        *out_ident = ident_new(GLOBAL, global_defs[var_index].offset);
+    if (name_in(var_name, context.locals.items, context.locals.len, &var_index)) {
+        *out_type = context.locals.items[var_index].type;
+        *out_ident = ident_new(LOCAL, context.locals.items[var_index].offset);
+    } else if (name_in(var_name, context.globals.items, context.globals.len, &var_index)) {
+        *out_type = context.globals.items[var_index].type;
+        *out_ident = ident_new(GLOBAL, context.globals.items[var_index].offset);
     } else return false;
     return true;
 }
@@ -368,8 +385,7 @@ Integer lstr_to_int(LStr str) {
 
 void parse_expr(
     Token * tokens,
-    Def * global_defs, u32 globals_len,
-    Def ** local_defs, u32 * locals_len, u32 * locals_cap,
+    Context * context,
     Expr * out_expr, Type * out_ret_type, Token ** out_next_token
 ) {
     switch (tokens->class) {
@@ -390,9 +406,7 @@ void parse_expr(
             OpBuiltin op = (OpBuiltin) { .class = B_SEQ };
             Token * token_ptr = &tokens[1];
             parse_function_call_args(
-                TK_CB_CLOSE, &token_ptr,
-                global_defs, globals_len,
-                local_defs, locals_len, locals_cap,
+                TK_CB_CLOSE, &token_ptr, context,
                 &op.args, &op.args_len, &op.argsb
             );
             *out_expr = (Expr) { OP_BUILTIN, TYPE_INT, malloc(sof(OpBuiltin)) };
@@ -411,9 +425,7 @@ void parse_expr(
                 OpBuiltin op = (OpBuiltin) { .class = bclass };
                 Token * token_ptr = &tokens[2];
                 parse_function_call_args(
-                    TK_CLOSE, &token_ptr,
-                    global_defs, globals_len,
-                    local_defs, locals_len, locals_cap,
+                    TK_CLOSE, &token_ptr, context,
                     &op.args, &op.args_len, &op.argsb
                 );
                 /* TODO: figure out return types for builtins */
@@ -425,8 +437,7 @@ void parse_expr(
             }
 
             else if (!parse_var(
-                tokens[0].val,
-                global_defs, globals_len, *local_defs, *locals_len,
+                tokens[0].val, *context,
                 &var_type, &ident
             )) error(tokens, "unknown identifier");
 
@@ -448,9 +459,7 @@ void parse_expr(
             
             Token * token_ptr = &tokens[2];
             parse_function_call_args(
-                TK_CLOSE, &token_ptr, 
-                global_defs, globals_len,
-                local_defs, locals_len, locals_cap,
+                TK_CLOSE, &token_ptr, context,
                 &call.args, &call.args_len, &call.argsb
             );
             
@@ -475,46 +484,29 @@ void parse_expr(
             Expr val;
             Type val_type;
             parse_expr(
-                &tokens[2], 
-                global_defs, globals_len,
-                local_defs, locals_len, locals_cap,
+                &tokens[2], context,
                 &val, &val_type, out_next_token
             );
             
+            LStr var_name = tokens[1].val;
+
             Type var_type;
-            Ident ident;
+            Ident var_ident;
 
-            if (!parse_var(
-                tokens[1].val,
-                global_defs, globals_len, *local_defs, *locals_len,
-                &var_type, &ident
+            if (parse_var(
+                var_name, *context, &var_type, &var_ident
             )) {
+                if (!type_eq(&var_type, &val_type))
+                    error(&tokens[2], "mismatched types");
+            } else {
                 var_type = val_type;
-
-                u32 offset = *locals_len ?
-                    (*local_defs)[*locals_len - 1].offset + sof_type[(*local_defs)[*locals_len - 1].type.class] : 0;
-
-                ident = ident_new(LOCAL, offset);
-
-                if (*locals_len >= *locals_cap) {
-                    *locals_cap *= 2;
-                    *local_defs = realloc(*local_defs, *locals_cap * sof(Def));
-                }
-
-                (*local_defs)[*locals_len] = (Def) {
-                    .name = tokens[1].val,
-                    .offset = var_offset(ident),
-                    .type = var_type
-                };
-                (*locals_len)++;
+                var_ident = add_local(context, var_name, var_type);
             }
-            /* should be deep comparison */
-            if (!type_eq(&var_type, &val_type))
-                error(&tokens[2], "mismatched types");
+
 
             Expr expr = (Expr) { OP_ASSIGN, var_type.class, malloc(sof(OpAssign)) };
             *(OpAssign*)expr.expr = (OpAssign) {
-                .ident = ident,
+                .ident = var_ident,
                 .val = val,
             };
             *out_expr = expr;
@@ -535,20 +527,20 @@ Function parse_function_code(
     Token * end_token;
     Type * ret_type = malloc(sof(Type));
 
-    u32 locals_len, locals_cap = locals_len = args_len;
-    if (!locals_cap) locals_cap = 1;
-    Def * local_defs = malloc(sof(Def) * locals_cap);
+    Context ctx = {
+        { global_defs, globals_len },
+        da_new(Def, args_len),
+    };
 
-    memcpy(local_defs, arg_defs, sof(Def) * locals_cap);
+    memcpy(ctx.locals.items, arg_defs, sof(Def) * args_len);
+    ctx.locals.len = args_len;
 
     parse_expr(
-        tokens,
-        global_defs, globals_len,
-        &local_defs, &locals_len, &locals_cap,
+        tokens, &ctx,
         &fn.body, ret_type, &end_token
     );
 
-    fn.localsb = locals_len ? local_defs[locals_len - 1].offset + sof_type[local_defs[locals_len - 1].type.class] : 0;
+    fn.localsb = locals_size(ctx);
     if (out_type) (*out_type = (Type) { .class = TYPE_FN_PTR, .data = NULL }); /* TODO: ARGS */
     return fn;
 }
