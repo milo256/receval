@@ -2,31 +2,20 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
-#include <ctype.h>
 
 #include "da.h"
-#include "types.h"
+#include "common.h"
+#include "tokenizer.h"
 #include "parse.h"
 
 #define MAX_COLS 40
 
 #define sof sizeof
 
-static char * builtin_names[] = {
-    [B_ADD_I] = "+",
-    [B_SUB_I] = "-",
-    [B_MUL_I] = "*",
-    [B_DIV_I] = "/",
-    [B_IF] = "if",
-    [B_WHILE] = "while",
-    [B_SEQ] = "seq",
-    [B_PRINT_I] = "print"
-};
 
 Ident ident_new(u32 loc, u32 ofs) { return (loc << 30) | ofs; }
 u32 var_location(Ident ident) { return ((3 << 30) & ident) >> 30; }
 u32 var_offset(Ident ident) { return (((1 << 30) - 1) & ident); }
-
 
 /* Note: receval does not have classes. the word "class" anywhere in this codebase just means "kind" or "category",
  * and does not have anything to do with the programming language construct. TypeClass refers to the overall type.
@@ -37,6 +26,7 @@ typedef struct Type {
     TypeClass class;
     void * data;
 } Type;
+
 
 typedef struct {
     Type ret_type;
@@ -64,33 +54,19 @@ typedef struct {
     da(Def) locals;
 } Context;
 
-typedef da(Def) DefList;
+typedef da(Def) Globals;
 
-/* -- TOKENS -- */
-typedef enum {
-    TK_INT,
-    TK_FLOAT,
-    TK_STRING,
-    TK_FUNCTION,
-    TK_ARROW,
-    TK_IDENT,
-    TK_ASSIGN,
-    TK_OPEN,
-    TK_CLOSE, 
-    TK_SB_OPEN,
-    TK_SB_CLOSE,
-    TK_CB_OPEN,
-    TK_CB_CLOSE,
-    TK_EOF,
-    TK_NONE
-} TkClass;
+char * builtin_names[] = {
+    [B_ADD_I] = "+",
+    [B_SUB_I] = "-",
+    [B_MUL_I] = "*",
+    [B_DIV_I] = "/",
+    [B_IF] = "if",
+    [B_WHILE] = "while",
+    [B_SEQ] = "seq",
+    [B_PRINT_I] = "print"
+};
 
-typedef struct {
-    TkClass class;
-    LStr val;
-    u32 dbug_line;
-    u32 dbug_column;
-} Token;
 
 Type * ret_type(Type * function) {
     ASSERT(function->class == TYPE_FN_PTR);
@@ -184,112 +160,6 @@ void error(Token * tk, char * msg) {
     exit(1);
 }
 
-int lstr_eq(LStr a, LStr b) {
-    return a.len == b.len && !strncmp(a.chars, b.chars, MIN(a.len, b.len));
-}
-
-u32 long_token_class(LStr str) {
-    if (isdigit(str.chars[0]))
-        return TK_INT;
-    if (lstr_eq(str, LSTR("function")))
-        return TK_FUNCTION;
-    return TK_IDENT;
-}
-
-u32 symbolic_token_class(LStr str) {
-    if (str.len == 1) switch(str.chars[0]) {
-        case '=': return TK_ASSIGN;
-        case '(': return TK_OPEN;
-        case ')': return TK_CLOSE;
-        case '{': return TK_CB_OPEN;
-        case '}': return TK_CB_CLOSE;
-        default: PANIC();
-    } else if (str.len == 2) {
-        if (str.chars[0] == '-' && str.chars[1] == '>')
-            return TK_ARROW;
-    }
-    PANIC();
-    return SATISFY_COMPILER;
-}
-
-void print_tokens(Token * tokens) {
-    while (tokens->class != TK_EOF) {
-        char * buf = malloc(tokens->val.len + 1);
-        buf[tokens->val.len] = 0;
-        strncpy(buf, tokens->val.chars, tokens->val.len);
-        printf("%d(%s)\n", tokens->class, buf);
-        free(buf);
-        tokens++;
-    }
-}
-
-/* by far the worst function */
-Token * tokenize(char * code) {
-#define make_token(class) (Token) { class, token_str, line, ts - line_start }
-
-    char char_tokens[] = "=(){}[]";
-
-    da(Token) tokens;
-
-    u32 line = 1, line_start = 0, ts = 0, tlen = 0;
-    char ch;
-
-    LStr token_str;
-
-    while ((ch = code[ts + tlen])) {
-        bool char_token = strchr(char_tokens, ch);
-        bool arrow = (ch == '-' && code[ts+tlen+1] == '>');
-        bool comment_start = (ch == '/' && code[ts+tlen+1] == '*');
-
-        if (!(comment_start || arrow || char_token || isspace(ch))) {
-            tlen++;
-            continue;
-        }
-        if (ch == '\n') {
-            line++;
-            line_start = ts + tlen;
-        }
-        if (tlen) {
-            /* scanned a token */
-            token_str = (LStr) { &code[ts], tlen };
-            da_append(tokens, make_token(long_token_class(token_str)));
-            ts += tlen;
-            tlen = 0;
-        }
-        if (char_token) {
-            token_str = (LStr) { &code[ts], 1 };
-            da_append(tokens, make_token(symbolic_token_class(token_str)));
-            ts++;
-        }
-        if (arrow) {
-            token_str = (LStr) { &code[ts], 2 };
-            da_append(tokens, make_token(TK_ARROW));
-            ts++;
-        }
-        if (!(tlen || char_token)) {
-            ts++;
-        }
-
-        if (comment_start) {
-            do {
-                if (ch == '\n') {
-                    line++;
-                    line_start = ts + tlen;
-                }
-                ts++;
-            } while ((ch = code[ts]) && !(ch == '*' && code[ts+1] == '/'));
-            ts += 2;
-        }
-    }
-
-    token_str = (LStr) { &code[ts - 1], 1 };
-    da_append(tokens, make_token(TK_EOF));
-
-    return tokens.items;
-}
-#undef make_tokens
-
-
 bool name_in(LStr name, Def * defs, u32 defs_len, u32 * out_index) {
     for (*out_index = 0; *out_index < defs_len; (*out_index)++)
         if (lstr_eq(defs[*out_index].name, name)) return true;
@@ -350,12 +220,6 @@ Ident add_local(Context * ctx, LStr name, Type type) {
 
 #define defs_size(list) \
         ((list).len ? (list).items[(list).len - 1].offset + sof_type[(list).items[(list).len - 1].type.class] : 0)
-
-u32 locals_size(Context ctx) {
-    return ctx.locals.len ?
-        ctx.locals.items[ctx.locals.len - 1].offset
-        + sof_type[ctx.locals.items[ctx.locals.len - 1].type.class] : 0;
-}
 
 
 bool parse_var(
@@ -555,14 +419,14 @@ TypeClass lstr_to_type_class(LStr str) {
     else return TYPE_NONE;
 }
 
-int delim(Token * token) {
+static int delim(Token *const token) {
     if (token->class == TK_OPEN || token->class == TK_CB_OPEN) return 1;
     else if (token->class == TK_CLOSE || token->class == TK_CB_CLOSE) return -1;
     else return 0;
 }
 
 /* TODO: doesn't work for assignments not within a function call */
-void skip_to_end(Token ** token) {
+static void skip_to_end(Token ** token) {
     Token * starting_token = *token;
     if (delim(*token) < 1) {
         (*token)++;
@@ -601,7 +465,7 @@ void get_arg_defs(Def * function_def, Def ** out_arg_defs) {
     } 
 }
 
-void parse_global_def(Token ** tokens, DefList * globals) {
+void parse_global_def(Token ** tokens, Globals * globals) {
     Token * token = *tokens;
     if (token->class != TK_ASSIGN) error(token, "expected global variable definition");
     token++;
@@ -663,7 +527,7 @@ void parse_global_def(Token ** tokens, DefList * globals) {
 }
 
 void parse_tokens(Token ** tokens, void ** out_globals, Function ** out_main) {
-    DefList global_defs = {};
+    Globals global_defs = {};
     *out_main = NULL;
 
     while((*tokens)->class != TK_EOF)

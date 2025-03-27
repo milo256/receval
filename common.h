@@ -1,7 +1,9 @@
 #pragma once
 
+#include <stdlib.h>
+#include <stdio.h>
+
 #define SATISFY_COMPILER 69420
-#define TYPE_MAX_SIZE sizeof(void *)
 
 #define MAX(A,B) ((A > B) ? A : B)
 #define MIN(A,B) ((A > B) ? B : A)
@@ -35,14 +37,20 @@ typedef struct {
 
 #define LSTR(cstr) (LStr) { .chars = cstr, .len = strlen(cstr) }
 
+int lstr_eq(LStr a, LStr b);
+
 /* -- RECEVAL TYPES -- */
 /* TypeClass defines the type's size on the stack but does not
  * include the full type information. see parse.c */
 typedef enum {
-    TYPE_NONE,
-    TYPE_FN_PTR,
-    TYPE_INT
+    TYPE_NONE = 0,
+    TYPE_FN_PTR = 'f',
+    TYPE_INT = 'i',
+    TYPE_STR = 's',
 } TypeClass;
+
+
+#define TYPE_MAX_SIZE sizeof(void *)
 
 static u32 sof_type[] = {
     [TYPE_INT] = sizeof(Integer),

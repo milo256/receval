@@ -1,9 +1,8 @@
 #include<stdio.h>
-#include<stdlib.h>
 #include<stdbool.h>
 #include<string.h>
 
-#include "types.h"
+#include "common.h"
 #include "parse.h"
 
 /* my z key is broken. sof = sizeof and b at the end of a
@@ -13,6 +12,10 @@
 /* ever wondered what happens to your function returns when
  * you cast them to (void)? */
 const char DISCARD[TYPE_MAX_SIZE];
+
+int lstr_eq(LStr a, LStr b) {
+    return a.len == b.len && !strncmp(a.chars, b.chars, MIN(a.len, b.len));
+}
 
 void eval_function(Function *, void *, void *, void *);
 void eval_expr(Expr *, void *, void *, void *);

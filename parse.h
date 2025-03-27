@@ -1,6 +1,6 @@
 #pragma once
 
-#include "types.h"
+#include "common.h"
 
 Ident ident_new(u32 loc, u32 ofs);
 u32 var_location(Ident ident);
