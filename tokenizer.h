@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.h"
+#include "arena.h"
 
 /* -- TOKENS -- */
 typedef enum {
@@ -28,5 +29,5 @@ typedef struct {
     u32 dbug_column;
 } Token;
 
-Token * tokenize(char *);
+Token * tokenize(char *, Arena *);
 

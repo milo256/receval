@@ -7,3 +7,4 @@ u32 var_location(Ident ident);
 u32 var_offset(Ident ident);
 
 void parse_code(char * code, void ** out_globals, Function ** out_main_fn);
+void free_code(void);

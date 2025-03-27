@@ -110,7 +110,7 @@ void eval_expr(
             Function * fn;
             eval_expr(&call->fn, globals, locals, &fn);
             
-            void * new_locals = malloc(fn->localsb);
+            void * new_locals = malloc(fn->stack_size);
             void * arg_ptr = new_locals;
 
             for (u32 i = 0; i < call->args_len; i++) {
@@ -141,7 +141,7 @@ void eval_expr(
 int eval_main(Function * fn, void * globals) {
     void * ret_ptr = malloc(sof_type[TYPE_INT]);
 
-    void * locals = malloc(fn->localsb);
+    void * locals = malloc(fn->stack_size);
 
     eval_expr(&fn->body, globals, locals, ret_ptr);
     
@@ -173,4 +173,5 @@ int main(int argc, char * argv[]) {
     parse_code(code, &globals, &main_fn);
     int ret = eval_main(main_fn, globals);
     printf("%d\n",ret);
+    free_code();
 }

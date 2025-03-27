@@ -85,7 +85,7 @@ typedef struct {
     void * expr;
 } Expr;
 
-typedef struct { u32 localsb; Expr body; } Function;
+typedef struct { u32 stack_size; Expr body; } Function;
 
 typedef struct { Ident ident; } OpVar;
 typedef struct { Ident ident; Expr val; } OpAssign;

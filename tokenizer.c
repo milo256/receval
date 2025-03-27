@@ -38,12 +38,12 @@ static void print_tokens(Token const * tokens) {
     }
 }
 
-Token * tokenize(char * code) {
+Token * tokenize(char * code, Arena * arena) {
     #define make_token(class) (Token) { class, token_str, line, ts - line_start }
 
     char char_tokens[] = "=(){}[]";
 
-    da(Token) tokens = {};
+    da(Token) token_list = {};
 
     u32 line = 1, line_start = 0, ts = 0, tlen = 0;
     char ch;
@@ -66,18 +66,18 @@ Token * tokenize(char * code) {
         if (tlen) {
             /* scanned a token */
             token_str = (LStr) { &code[ts], tlen };
-            da_append(tokens, make_token(long_token_class(token_str)));
+            da_append(token_list, make_token(long_token_class(token_str)));
             ts += tlen;
             tlen = 0;
         }
         if (char_token) {
             token_str = (LStr) { &code[ts], 1 };
-            da_append(tokens, make_token(symbolic_token_class(token_str)));
+            da_append(token_list, make_token(symbolic_token_class(token_str)));
             ts++;
         }
         if (arrow) {
             token_str = (LStr) { &code[ts], 2 };
-            da_append(tokens, make_token(TK_ARROW));
+            da_append(token_list, make_token(TK_ARROW));
             ts++;
         }
         if (!(tlen || char_token)) {
@@ -98,9 +98,16 @@ Token * tokenize(char * code) {
     }
 
     token_str = (LStr) { &code[ts - 1], 1 };
-    da_append(tokens, make_token(TK_EOF));
+    da_append(token_list, make_token(TK_EOF));
 
-    return tokens.items;
+
+    u32 n = token_list.len * sizeof(Token);
+    Token * tokens = aalloc(arena, n);
+    memcpy(tokens, token_list.items, n);
+
+    free(token_list.items);
+
+    return tokens;
     #undef make_token
 }
 
