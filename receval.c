@@ -163,8 +163,9 @@ int main(int argc, char * argv[]) {
     fseek(f, 0, SEEK_END);
     u32 code_len = ftell(f);
     rewind(f);
-    char * code = malloc(code_len);
+    char * code = malloc(code_len + 1);
     fread(code, 1, code_len, f); 
+    code[code_len] = 0;
     fclose(f);
 
     void * globals;

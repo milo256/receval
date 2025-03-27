@@ -43,7 +43,7 @@ Token * tokenize(char * code) {
 
     char char_tokens[] = "=(){}[]";
 
-    da(Token) tokens;
+    da(Token) tokens = {};
 
     u32 line = 1, line_start = 0, ts = 0, tlen = 0;
     char ch;
@@ -94,6 +94,7 @@ Token * tokenize(char * code) {
             } while ((ch = code[ts]) && !(ch == '*' && code[ts+1] == '/'));
             ts += 2;
         }
+        if (!code[ts + tlen - 1]) break;
     }
 
     token_str = (LStr) { &code[ts - 1], 1 };

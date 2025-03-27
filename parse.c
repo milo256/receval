@@ -17,6 +17,40 @@ Ident ident_new(u32 loc, u32 ofs) { return (loc << 30) | ofs; }
 u32 var_location(Ident ident) { return ((3 << 30) & ident) >> 30; }
 u32 var_offset(Ident ident) { return (((1 << 30) - 1) & ident); }
 
+#define ARENA_BLOCK_SIZE 1024
+typedef struct {
+    void * mem, * fill_ptr;
+} Arena;
+
+Arena arena_init() {
+    Arena ret;
+    ret.mem = malloc(ARENA_BLOCK_SIZE);
+    *(void **) ret.mem = NULL;
+    ret.fill_ptr = ret.mem + sizeof(void *);
+    return ret;
+}
+
+void * aalloc(Arena arena, u32 size) {
+    void * ptr;
+    if (arena.fill_ptr + size < arena.mem + ARENA_BLOCK_SIZE) {
+        ptr = arena.fill_ptr;
+    } else {
+        ASSERT(size < ARENA_BLOCK_SIZE);
+        void * old_mem = arena.mem;
+        arena.mem = malloc(ARENA_BLOCK_SIZE);
+        *(void **) arena.mem = old_mem;
+        ptr = arena.mem + sizeof(void *);
+    }
+    arena.fill_ptr = ptr + size;
+    return ptr;
+}
+
+void afree(void * arena_mem) {
+    void * last = *(void **) arena_mem;
+    if (last) afree(last);
+    free(arena_mem);
+}
+
 /* Note: receval does not have classes. the word "class" anywhere in this codebase just means "kind" or "category",
  * and does not have anything to do with the programming language construct. TypeClass refers to the overall type.
  * e.g. Function pointers are TypeClass `TYPE_FN_PTR` but Type `{ TYPE_FN_PTR, <return_type> }`
@@ -56,7 +90,7 @@ typedef struct {
 
 typedef da(Def) Globals;
 
-char * builtin_names[] = {
+static char * builtin_names[] = {
     [B_ADD_I] = "+",
     [B_SUB_I] = "-",
     [B_MUL_I] = "*",
@@ -68,22 +102,25 @@ char * builtin_names[] = {
 };
 
 
-Type * ret_type(Type * function) {
+static Type * get_ret_type(Type * function) {
     ASSERT(function->class == TYPE_FN_PTR);
     return &((FunctionTypeData *) function->data)->ret_type;
 }
 
-Type * get_arg_types(Type * function) {
+
+static Type * get_arg_types(Type * function) {
     ASSERT(function->class == TYPE_FN_PTR);
     return (Type *) ((void *) function->data + sizeof(FunctionTypeData));
 }
 
-u32 get_args_len(Type * function) {
+
+static u32 get_args_len(Type * function) {
     ASSERT(function->class == TYPE_FN_PTR);
     return ((FunctionTypeData *) function->data)->args_len;
 }
 
-Type type_function_ptr(Type ret_type) {
+
+static Type make_type_fn_ptr(Type ret_type) {
     FunctionTypeData data = {
         .ret_type = ret_type,
         .args_len = 0,
@@ -97,7 +134,43 @@ Type type_function_ptr(Type ret_type) {
     };
 }
 
-bool type_eq(Type * a, Type * b) {
+static Type make_type_int() { return (Type) { .class = TYPE_INT }; }
+
+static Expr make_expr_literal(TypeClass type_class, void ** val_ptr) {
+    Expr expr = {
+        .class = LITERAL,
+        .ret_class = type_class,
+        .expr = malloc(sof(Literal))
+    };
+    Literal literal = { .val = malloc(sof_type[type_class]) };
+    *val_ptr = literal.val;
+    *(Literal *)(expr.expr) = literal;
+    return expr;
+}
+
+static Expr make_expr_builtin(BuiltinClass class, TypeClass ret_class, OpBuiltin ** op_ptr) {
+    Expr expr = { OP_BUILTIN, ret_class, malloc(sof(OpBuiltin)) };
+    *op_ptr = expr.expr;
+    **op_ptr = (OpBuiltin) { .class = class };
+    return expr;
+}
+
+static Expr make_expr_call(Expr fn, TypeClass ret_class, OpCall ** op_ptr) {
+    Expr expr = { OP_CALL, ret_class, malloc(sof(OpCall)) };
+    *op_ptr = expr.expr;
+    **op_ptr = (OpCall) { .fn = fn };
+    return expr;
+}
+
+static Expr make_expr_var(TypeClass type_class, Ident ident) {
+    Expr expr = { OP_VAR, type_class, malloc(sof(OpVar)) };
+    OpVar * op = expr.expr;
+    op->ident = ident;
+    return expr;
+}
+
+
+static bool type_eq(Type * a, Type * b) {
     if (a->class != b->class) return false;
     if (a == b) return true;
     switch (a->class) {
@@ -119,7 +192,8 @@ bool type_eq(Type * a, Type * b) {
     return SATISFY_COMPILER;
 }
 
-void arg_type_push(Type * function, Type arg_type) {
+
+static void arg_type_push(Type * function, Type arg_type) {
     ASSERT(function->class == TYPE_FN_PTR);
     FunctionTypeData * data = (FunctionTypeData *) function->data;
 
@@ -131,7 +205,8 @@ void arg_type_push(Type * function, Type arg_type) {
     types[data->args_len - 1] = arg_type;
 }
 
-void error(Token * tk, char * msg) {
+
+static void error(Token const * tk, char * msg) {
     fprintf(stderr, "Receval: Error on %d:%d: %s\n", tk->dbug_line, tk->dbug_column, msg);
     char * at = tk->val.chars;
     char * line_start = at - tk->dbug_column + 1;
@@ -160,48 +235,35 @@ void error(Token * tk, char * msg) {
     exit(1);
 }
 
-bool name_in(LStr name, Def * defs, u32 defs_len, u32 * out_index) {
-    for (*out_index = 0; *out_index < defs_len; (*out_index)++)
-        if (lstr_eq(defs[*out_index].name, name)) return true;
-    return false;
-}
-
-void parse_expr(
-    Token *const tokens,
+static void parse_expr(
+    Token const ** tokens,
     Context * context,
-    Expr * out_expr, Type * out_ret_type, Token ** out_next_token
+    Expr * out_expr, Type * out_ret_type
 );
 
-void parse_function_call_args(
+static void parse_function_call_args(
     TkClass close,
-    Token ** token_ptr,
+    Token const ** tokens,
     Context * context,
     Expr ** out_args, u32 * out_args_len
 ) {
-    Expr * args;
-    u32 args_cap = 2, args_len = 0, argsb = 0;
+    da(Expr) args = {};
 
-    args = malloc(args_cap * sof(Expr));
-
-    while((**token_ptr).class != close) {
-        if (args_len >= args_cap) {
-            args_cap *= 2;
-            args = realloc(args, args_cap * sof(Expr));
-        }
+    while((*tokens)->class != close) {
+        Expr arg;
         Type arg_type;
         parse_expr(
-            *token_ptr, context,
-            &args[args_len], &arg_type, token_ptr
+            tokens, context,
+            &arg, &arg_type
         );
-        argsb += sof_type[arg_type.class];
-        args_len++;
+        da_append(args, arg);
     }
 
-    *out_args = args;
-    *out_args_len = args_len;
+    *out_args = args.items;
+    *out_args_len = args.len;
 }
 
-Ident add_local(Context * ctx, LStr name, Type type) {
+static Ident add_local(Context * ctx, LStr name, Type type) {
     u32 offset = ctx->locals.len ?
         ctx->locals.items[ctx->locals.len - 1].offset
         + sof_type[ctx->locals.items[ctx->locals.len - 1].type.class] : 0;
@@ -222,7 +284,13 @@ Ident add_local(Context * ctx, LStr name, Type type) {
         ((list).len ? (list).items[(list).len - 1].offset + sof_type[(list).items[(list).len - 1].type.class] : 0)
 
 
-bool parse_var(
+static bool name_in(LStr name, Def * defs, u32 defs_len, u32 * out_index) {
+    for (*out_index = 0; *out_index < defs_len; (*out_index)++)
+        if (lstr_eq(defs[*out_index].name, name)) return true;
+    return false;
+}
+
+static bool parse_var(
     LStr var_name,
     Context context,
     Type * out_type, Ident * out_ident
@@ -238,126 +306,114 @@ bool parse_var(
     return true;
 }
 
-BuiltinClass lstr_to_builtin(LStr str) {
+static BuiltinClass lstr_to_builtin(LStr str) {
     for (BuiltinClass i = 0; i < ARRLEN(builtin_names); i++) {
         if (lstr_eq(str, LSTR(builtin_names[i]))) return i;
     }
     return B_NONE;
 }
 
-Integer lstr_to_int(LStr str) {
+static Integer lstr_to_int(LStr str) {
     char * end_ptr;
     Integer ret = strtol(str.chars, &end_ptr, 10); 
     ASSERT(end_ptr == str.chars + str.len);
     return ret;
 }
 
-void parse_expr(
-    Token * tokens,
-    Context * context,
-    Expr * out_expr, Type * out_ret_type, Token ** out_next_token
+static void parse_expr(
+    Token const ** tokens, Context * context,
+    Expr * out_expr, Type * out_ret_type
 ) {
-    switch (tokens->class) {
+    switch ((*tokens)->class) {
         case TK_INT: {
-            Integer integer = lstr_to_int(tokens->val);
-            *out_ret_type = (Type) { .class = TYPE_INT };
-            *out_expr = (Expr) {
-                .class = LITERAL,
-                .ret_class = TYPE_INT,
-                .expr = malloc(sof(Literal))
-            };
-            Literal literal = (Literal) { .val = malloc(sof(Integer)) };
-            *(Integer *)(literal.val) = integer;
-            *(Literal *)(out_expr->expr) = literal;
-            *out_next_token = &tokens[1];
+            Integer * value_ptr;
+            *out_ret_type = make_type_int();
+            *out_expr = make_expr_literal(TYPE_INT, (void **) &value_ptr);
+            *value_ptr = lstr_to_int((*tokens)->val);
+            (*tokens)++;
             return;
         } case TK_CB_OPEN: {
-            OpBuiltin op = (OpBuiltin) { .class = B_SEQ };
-            Token * token_ptr = &tokens[1];
+            OpBuiltin * op;
+            *out_expr = make_expr_builtin(B_SEQ, TYPE_INT, &op);
+            (*tokens) += 1;
             parse_function_call_args(
-                TK_CB_CLOSE, &token_ptr, context,
-                &op.args, &op.args_len
+                TK_CB_CLOSE, tokens, context, &op->args, &op->args_len
             );
-            *out_expr = (Expr) { OP_BUILTIN, TYPE_INT, malloc(sof(OpBuiltin)) };
-            *out_ret_type = (Type) { .class = TYPE_INT };
-            *(OpBuiltin *)(out_expr->expr) = op;
-            *out_next_token = &token_ptr[1];
+            *out_ret_type = make_type_int();
+            (*tokens)++;
             return;
         } case TK_IDENT: {
             /* ident as expr if not a builtin is a variable, maybe a function call */
             Type var_type;
             Ident ident;
 
-            BuiltinClass bclass = lstr_to_builtin(tokens->val);
+            BuiltinClass bclass = lstr_to_builtin((*tokens)->val);
 
             if (bclass != B_NONE) {
-                OpBuiltin op = (OpBuiltin) { .class = bclass };
-                Token * token_ptr = &tokens[2];
+                OpBuiltin * op;
+                *out_expr = make_expr_builtin(bclass, TYPE_INT, &op);
+                (*tokens) += 2;
                 parse_function_call_args(
-                    TK_CLOSE, &token_ptr, context,
-                    &op.args, &op.args_len
+                    TK_CLOSE, tokens, context, &op->args, &op->args_len
                 );
-                /* TODO: figure out return types for builtins */
-                *out_expr = (Expr) { OP_BUILTIN, TYPE_INT, malloc(sof(OpBuiltin)) };
-                *out_ret_type = (Type) { .class = TYPE_INT };
-                *(OpBuiltin *)(out_expr->expr) = op;
-                *out_next_token = &token_ptr[1];
+                *out_ret_type = make_type_int();
+                (*tokens)++;
                 return;
             }
 
-            else if (!parse_var(
-                tokens[0].val, *context,
+            if (!parse_var(
+                (*tokens)->val, *context,
                 &var_type, &ident
-            )) error(tokens, "unknown identifier");
+            )) error(*tokens, "unknown identifier");
 
-            Expr var_expr = (Expr) { OP_VAR, var_type.class, malloc(sof(OpVar)) };
-            *(OpVar *)(var_expr.expr) = (OpVar) { .ident = ident };
+            Expr var_expr = make_expr_var(var_type.class, ident);
 
-            if (tokens[1].class != TK_OPEN) {
+            if ((*tokens)[1].class != TK_OPEN) {
                 *out_expr = var_expr;
                 *out_ret_type = var_type;
-                *out_next_token = &tokens[1];
+                (*tokens)++;
                 return;
             }
 
             if (var_type.class != TYPE_FN_PTR)
-                error(&tokens[1], "not a function");
+                error(*tokens + 1, "not a function");
 
-            OpCall call = (OpCall) { .fn = var_expr };
+            OpCall * call;
+            *out_expr = make_expr_call(var_expr, get_ret_type(&var_type)->class, &call);
 
             
-            Token * token_ptr = &tokens[2];
+            Token const * token_ptr = *tokens + 2;
             parse_function_call_args(
                 TK_CLOSE, &token_ptr, context,
-                &call.args, &call.args_len
+                &call->args, &call->args_len
             );
             
             //Type * expected_arg_types = get_arg_types(&var_type);
             u32 expected_args_len = get_args_len(&var_type);
 
-            if (expected_args_len != call.args_len)
-                error(&tokens[2], "incorrect number of arguments provided");
+            if (expected_args_len != call->args_len)
+                error(*tokens + 2, "incorrect number of arguments provided");
 
-            *out_ret_type = *ret_type(&var_type);
+            *out_ret_type = *get_ret_type(&var_type);
 
-            *out_expr = (Expr) { OP_CALL, out_ret_type->class, malloc(sof(OpCall)) };
-            *(OpCall *)(out_expr->expr) = call;
-
-            *out_next_token = &token_ptr[1];
+            *tokens = token_ptr + 1;
 
             return;
         } case TK_ASSIGN: {
-            if (tokens[1].class != TK_IDENT)
-                error(&tokens[1], "expected identifier");
+            (*tokens)++;
+            if ((*tokens)->class != TK_IDENT)
+                error(*tokens + 1, "expected identifier");
+
+            LStr var_name = (*tokens)->val;
+            (*tokens)++;
 
             Expr val;
             Type val_type;
             parse_expr(
-                &tokens[2], context,
-                &val, &val_type, out_next_token
+                tokens, context,
+                &val, &val_type
             );
             
-            LStr var_name = tokens[1].val;
 
             Type var_type;
             Ident var_ident;
@@ -366,7 +422,7 @@ void parse_expr(
                 var_name, *context, &var_type, &var_ident
             )) {
                 if (!type_eq(&var_type, &val_type))
-                    error(&tokens[2], "mismatched types");
+                    error(*tokens + 2, "mismatched types");
             } else {
                 var_type = val_type;
                 var_ident = add_local(context, var_name, var_type);
@@ -382,18 +438,17 @@ void parse_expr(
             *out_ret_type = var_type;
             return; 
         }
-        default: error(tokens, "expected expression");
+        default: error(*tokens, "expected expression");
     }
 }
 
-Function parse_function_code(
-        Token * tokens,
+static Function parse_function_code(
+        const Token * tokens,
         Def * global_defs, u32 globals_len,
         Def * arg_defs, u32 args_len,
         Type * out_type
 ) {
     Function fn;
-    Token * end_token;
     Type * ret_type = malloc(sof(Type));
 
     Context ctx = {
@@ -404,9 +459,10 @@ Function parse_function_code(
     memcpy(ctx.locals.items, arg_defs, sof(Def) * args_len);
     ctx.locals.len = args_len;
 
+    const Token * end_token = tokens;
     parse_expr(
-        tokens, &ctx,
-        &fn.body, ret_type, &end_token
+        &end_token, &ctx,
+        &fn.body, ret_type
     );
 
     fn.localsb = defs_size(ctx.locals);
@@ -414,7 +470,7 @@ Function parse_function_code(
     return fn;
 }
 
-TypeClass lstr_to_type_class(LStr str) {
+static TypeClass lstr_to_type_class(LStr str) {
     if (lstr_eq(str, LSTR("int"))) return TYPE_INT;
     else return TYPE_NONE;
 }
@@ -442,12 +498,12 @@ static void skip_to_end(Token ** token) {
 
 /* returns 0 if successful, 1 if error */
 /* TODO: implement :P */
-int parse_type(Token ** token, Type * out_type) {
+static int parse_type(Token ** token, Type * out_type) {
     *out_type = (Type) { lstr_to_type_class((*token)->val), NULL };
     return 0;
 }
 
-void get_arg_defs(Def * function_def, Def ** out_arg_defs) {
+static void get_arg_defs(Def * function_def, Def ** out_arg_defs) {
     ASSERT(function_def->type.class == TYPE_FN_PTR);
     u32 args_len = get_args_len(&function_def->type);
     Type * types = get_arg_types(&function_def->type);
@@ -465,7 +521,7 @@ void get_arg_defs(Def * function_def, Def ** out_arg_defs) {
     } 
 }
 
-void parse_global_def(Token ** tokens, Globals * globals) {
+static void parse_global_def(Token ** tokens, Globals * globals) {
     Token * token = *tokens;
     if (token->class != TK_ASSIGN) error(token, "expected global variable definition");
     token++;
@@ -486,7 +542,7 @@ void parse_global_def(Token ** tokens, Globals * globals) {
         Type ret_type;
         if (parse_type(&token, &ret_type)) error(token, "expected type annotation");
 
-        type = type_function_ptr(ret_type); 
+        type = make_type_fn_ptr(ret_type); 
 
         token++;
 
@@ -526,7 +582,7 @@ void parse_global_def(Token ** tokens, Globals * globals) {
     *tokens = token;
 }
 
-void parse_tokens(Token ** tokens, void ** out_globals, Function ** out_main) {
+static void parse_tokens(Token ** tokens, void ** out_globals, Function ** out_main) {
     Globals global_defs = {};
     *out_main = NULL;
 
