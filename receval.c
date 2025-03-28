@@ -45,7 +45,6 @@ void eval_builtin(
     Expr * params = builtin->args;
     u32 param_count = builtin->args_len;
 
-    Integer condition;
     switch (builtin->class) {
         case B_ADD_I: 
             do_2op(Integer, +);
