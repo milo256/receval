@@ -10,7 +10,8 @@
 
 /* ever wondered what happens to your function returns
  * when you cast them to (void)? */
-const char DISCARD[TYPE_MAX_SIZE];
+char DISCARD_BUF[TYPE_MAX_SIZE];
+void * const DISCARD = DISCARD_BUF;
 
 
 void eval_function(Function *, void *, void *, void *);
@@ -64,26 +65,6 @@ void eval_builtin(
         case B_MUL_VI:
             do_vop(Integer, *);
             break;
-        case B_IF:
-            ASSERT(param_count > 1 && param_count < 4);
-
-            eval_expr(params, globals, locals, &condition);
-            if (condition)
-                eval_expr(&params[1], globals, locals, ret_ptr);
-            else if (param_count > 2)
-                eval_expr(&params[2], globals, locals, ret_ptr);
-            else
-                memset(ret_ptr, 0, sizeof(Integer));
-            break;
-        case B_WHILE:
-            ASSERT(param_count == 2);
-            
-            eval_expr(params, globals, locals, &condition);
-            while (condition) {
-                eval_expr(&params[1], globals, locals, ret_ptr);
-                eval_expr(params, globals, locals, &condition);
-            }
-            break;
         case B_SEQ:
             ASSERT(param_count > 0);
             for (u32 i = 0; i < param_count - 1; i++) {
@@ -102,12 +83,36 @@ void eval_builtin(
 }
 
 
+void eval_if(OpIf * op, void * globals, void * locals) {
+    Integer condition;
+    seval_expr(&op->cond, &condition);
+    if (condition) seval_expr(&op->if_expr, DISCARD);
+}
+
+
+void eval_if_else(OpIfElse * op, void * globals, void * locals, void * ret_ptr) {
+    Integer condition;
+    seval_expr(&op->cond, &condition);
+    if (condition) seval_expr(&op->if_expr, ret_ptr);
+    else seval_expr(&op->else_expr, ret_ptr);
+}
+
+
+void eval_while(OpWhile * op, void * globals, void * locals) {
+    Integer condition;
+    for(;;) {
+        seval_expr(&op->cond, &condition);
+        if (!condition) break;
+        seval_expr(&op->while_expr, DISCARD);
+    }
+}
+
+
 void eval_expr(
     Expr * expr, void * globals, void * locals, void * ret_ptr
 ) {
     Ident var;
     OpCall * call;
-    OpBuiltin * builtin;
     u32 ret_size = expr->ret_size;
     switch (expr->class) {
         case OP_VAR: case OP_ASSIGN:
@@ -145,10 +150,17 @@ void eval_expr(
             free(new_locals);
             break;
         case OP_BUILTIN:
-            builtin = (OpBuiltin *) expr->expr;
-
-            eval_builtin(builtin, globals, locals, ret_ptr);
+            eval_builtin(expr->expr, globals, locals, ret_ptr);
             break; 
+        case OP_WHILE:
+            eval_while(expr->expr, globals, locals);
+            break;
+        case OP_IF:
+            eval_if(expr->expr, globals, locals);
+            break;
+        case OP_IF_ELSE:
+            eval_if_else(expr->expr, globals, locals, ret_ptr);
+            break;
         case INT_LITERAL:
             *(Integer *) ret_ptr = *(Integer *) expr->expr;
             break;

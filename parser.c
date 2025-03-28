@@ -26,18 +26,31 @@
  *------------------------------------------------------------------------------
  */
 
+#define DEF_TYPE_CLASSES(f) \
+    f(TYPE_NONE,     NULL,    0) \
+    f(TYPE_VOID,     "void",  0) \
+    f(TYPE_FUNCTION, NULL,    sizeof(int *)) \
+    f(TYPE_INT,      "int",   sizeof(Integer)) \
+    f(TYPE_STR,      "str",   sizeof(String))
+
+#define TC_MAKE_ENUM(enum_name, str_name, size) enum_name,
+#define TC_MAKE_SIZE_TABLE(enum_name, str_name, size) [enum_name] = size,
+#define TC_MAKE_NAME_TABLE(enum_name, str_name, size) [enum_name] = str_name,
+
 typedef enum {
-    TYPE_NONE,
-    TYPE_FN_PTR,
-    TYPE_INT,
-    TYPE_STR,
+    DEF_TYPE_CLASSES(TC_MAKE_ENUM)
 } TypeClass;
 
 
 static u32 type_sizes[] = {
-    [TYPE_INT] = sizeof(Integer),
-    [TYPE_FN_PTR] = sizeof(void *)
+    DEF_TYPE_CLASSES(TC_MAKE_SIZE_TABLE)
 };
+
+
+static char * type_names[] = {
+    DEF_TYPE_CLASSES(TC_MAKE_NAME_TABLE)
+};
+
 
 typedef struct Type {
     TypeClass class;
@@ -164,9 +177,11 @@ static void skip_to_end(const Token ** token) {
 
 
 static TypeClass lstr_to_type_class(LStr str) {
-    if (lstr_eq(str, LSTR("int"))) return TYPE_INT;
-    else if (lstr_eq(str, LSTR("str"))) return TYPE_STR;
-    else return TYPE_NONE;
+    for (u32 i = 0; i < ARRLEN(type_names); i++) {
+        if (!type_names[i]) continue;
+        if (lstr_str_eq(str, type_names[i])) return i;
+    }
+    return TYPE_NONE;
 }
 
 
@@ -182,19 +197,19 @@ static u32 sizeof_type(int type_class) {
 }
 
 static Type * get_ret_type(Type function) {
-    ASSERT(function.class == TYPE_FN_PTR);
+    ASSERT(function.class == TYPE_FUNCTION);
     return &((FunctionTypeData *) function.data)->ret_type;
 }
 
 
 static Type * get_param_types(Type function) {
-    ASSERT(function.class == TYPE_FN_PTR);
+    ASSERT(function.class == TYPE_FUNCTION);
     return (Type *) ((void *) function.data + sizeof(FunctionTypeData));
 }
 
 
 static u32 get_param_count(Type function) {
-    ASSERT(function.class == TYPE_FN_PTR);
+    ASSERT(function.class == TYPE_FUNCTION);
     return ((FunctionTypeData *) function.data)->param_count;
 }
 
@@ -210,13 +225,15 @@ static Type make_type_fn_ptr(Type ret_type, u32 param_count) {
     );
     *(FunctionTypeData *)ptr = data;
     return (Type) {
-        .class = TYPE_FN_PTR,
+        .class = TYPE_FUNCTION,
         .data = ptr
     };
 }
 
 
 static Type make_type_int() { return (Type) { .class = TYPE_INT }; }
+
+static Type make_type_void() { return (Type) { .class = TYPE_VOID }; }
 
 
 static bool type_eq(const Type * a, const Type * b) {
@@ -225,7 +242,7 @@ static bool type_eq(const Type * a, const Type * b) {
     switch (a->class) {
         case TYPE_INT: case TYPE_STR:
             return true;
-        case TYPE_FN_PTR: {
+        case TYPE_FUNCTION: {
             u32 alen = get_param_count(*a);
             u32 blen = get_param_count(*b);
             if (alen != blen) return false;
@@ -248,61 +265,65 @@ static bool type_eq(const Type * a, const Type * b) {
  * -----------------------------------------------------------------------------
  */
 
+#define MAKE_EXPR(class_val, ret_size_val, inner_var_ptr, inner_type, ...) \
+    (((inner_var_ptr) = aalloc(&code_arena, sizeof(inner_type))), \
+    (*(inner_var_ptr) = (inner_type) __VA_ARGS__), \
+    (Expr) { \
+        .class = (class_val), \
+        .ret_size = (ret_size_val), \
+        .expr = (inner_var_ptr) \
+    }) \
+
+
 static Expr make_expr_int_literal(Integer val) {
-    Expr expr = {
-        .class = INT_LITERAL,
-        .ret_size = sizeof(val),
-        .expr = aalloc(&code_arena, sizeof(val))
-    };
-    *(Integer *) expr.expr = val;
-    return expr;
+    Integer * _; return MAKE_EXPR(INT_LITERAL, sizeof(val), _, Integer, val);
 }
 
 
-static Expr make_expr_builtin(BuiltinClass class, TypeClass ret_class, OpBuiltin ** op_ptr) {
-    Expr expr = {
-        .class = OP_BUILTIN,
-        .ret_size = sizeof_type(ret_class),
-        .expr = aalloc(&code_arena, sof(OpBuiltin))
-    };
-    *op_ptr = expr.expr;
-    **op_ptr = (OpBuiltin) { .class = class };
-    return expr;
+static Expr make_expr_builtin(
+    BuiltinClass class, TypeClass ret_class, OpBuiltin ** op_ptr
+) {
+    return MAKE_EXPR
+        (OP_BUILTIN, sizeof_type(ret_class),*op_ptr, OpBuiltin, { .class = class });
 }
+
 
 
 static Expr make_expr_call(Expr fn, TypeClass ret_class, OpCall ** op_ptr) {
-    Expr expr = {
-        .class = OP_CALL, 
-        .ret_size = sizeof_type(ret_class),
-        .expr = aalloc(&code_arena, sof(OpCall))
-    };
-    *op_ptr = expr.expr;
-    **op_ptr = (OpCall) { .fn = fn };
-    return expr;
+    return MAKE_EXPR
+        (OP_CALL, sizeof_type(ret_class), *op_ptr, OpCall, { .fn = fn });
 }
 
 
 static Expr make_expr_var(TypeClass type_class, Ident ident) {
-    Expr expr = {
-        .class = OP_VAR,
-        .ret_size = sizeof_type(type_class),
-        .expr = aalloc(&code_arena, sof(OpVar))
-    };
-    OpVar * op = expr.expr;
-    op->ident = ident;
-    return expr;
+    OpVar * _;
+    return MAKE_EXPR(OP_VAR, sizeof_type(type_class), _, OpVar, { ident });
 }
 
 
 static Expr make_expr_assignment(Type type, Ident ident, Expr val) {
-    Expr expr = (Expr) {
-        .class = OP_ASSIGN,
-        .ret_size = sizeof_type(type.class),
-        .expr = aalloc(&code_arena, sof(OpAssign))
-    };
-    *(OpAssign*)expr.expr = (OpAssign) { ident, val };
-    return expr;
+    OpAssign * _;
+    return MAKE_EXPR
+        (OP_ASSIGN, sizeof_type(type.class), _, OpAssign, { ident, val });
+}
+
+
+static Expr make_expr_if(Expr cond, Expr if_expr) {
+    OpIf * _; return MAKE_EXPR(OP_IF, 0, _, OpIf, { cond, if_expr });
+}
+
+
+static Expr make_expr_if_else(Expr cond, Expr if_expr, Expr else_expr) {
+    OpIfElse * _;
+    return MAKE_EXPR(
+        OP_IF_ELSE, MAX(if_expr.ret_size, else_expr.ret_size),
+        _, OpIfElse, { cond, if_expr, else_expr }
+    );
+}
+
+
+static Expr make_expr_while(Expr cond, Expr while_expr) {
+    OpIf * _; return MAKE_EXPR(OP_WHILE, 0, _, OpIf, { cond, while_expr });
 }
 
 
@@ -329,7 +350,7 @@ static Ident add_local(Context * ctx, LStr name, Type type) {
 
 
 static void create_param_defs(const Def * function_def, Def * buf) {
-    ASSERT(function_def->type.class == TYPE_FN_PTR);
+    ASSERT(function_def->type.class == TYPE_FUNCTION);
     u32 offset = 0,
         param_count = get_param_count(function_def->type);
 
@@ -373,8 +394,6 @@ static const BuiltinProto builtin_protos[] = {
     "-",     { "ii", B_SUB_I },
     "/",     { "ii", B_DIV_I },
     "print", { "i",  B_PRINT_I },
-    "if",    { "ia", B_IF, "iaa", B_IF_ELSE },
-    "while", { "ia", B_WHILE, }
 };
 
 
@@ -385,7 +404,7 @@ static u32 match_type_sh(const char * sh, Type type) {
         case 'i':
             return (type.class == TYPE_INT);
         case 'p':
-            if (type.class != TYPE_FN_PTR) return 0;
+            if (type.class != TYPE_FUNCTION) return 0;
             u32 param_count = *(++sh);
             sh++;
             if (get_param_count(type) != param_count) return 0;
@@ -620,27 +639,92 @@ static void parse_expr_call(
 }
 
 
+static void parse_if(
+    const Token ** tokens, Context * context,
+    Expr * out_expr, Type * out_ret_type
+) {
+    skip(*tokens, TK_IDENT);
+
+    Expr cond_expr, if_expr;
+    Type cond_type, if_type;
+    const Token * cond_token = *tokens, * if_token;
+    parse_expr(tokens, context, &cond_expr, &cond_type);
+
+    if (cond_type.class != TYPE_INT) error(cond_token, "expected int");
+    
+    if_token = *tokens;
+    parse_expr(tokens, context, &if_expr, &if_type);
+
+    if ((*tokens)->class == TK_IDENT && lstr_str_eq((*tokens)->val, "else")) {
+        skip(*tokens, TK_IDENT);
+        Expr else_expr;
+        Type else_type;
+
+        parse_expr(tokens, context, &else_expr, &else_type);
+
+        if (!type_eq(&if_type, &else_type))
+            error(if_token, "expected if and else expressions to be the same type");
+
+        *out_expr = make_expr_if_else(cond_expr, if_expr, else_expr);
+        *out_ret_type = if_type;
+    } else {
+        *out_expr = make_expr_if(cond_expr, if_expr);
+        *out_ret_type = make_type_void();
+    }
+
+}
+
+
+static void parse_while(
+    const Token ** tokens, Context * context,
+    Expr * out_expr, Type * out_ret_type
+) {
+    skip(*tokens, TK_IDENT);
+    Expr cond_expr, while_expr;
+    Type cond_type, while_type;
+    
+    const Token * cond_token = *tokens;
+    parse_expr(tokens, context, &cond_expr, &cond_type);
+
+    if (cond_type.class != TYPE_INT) error(cond_token, "expected int");
+    
+    parse_expr(tokens, context, &while_expr, &while_type);
+
+    *out_expr = make_expr_while(cond_expr, while_expr);
+    *out_ret_type = make_type_void();
+}
+
+
 static void parse_ident(
     const Token ** tokens, Context * context,
     Expr * out_expr, Type * out_ret_type
 ) {
+    LStr name = (*tokens)->val;
+
+    if (lstr_str_eq(name, "if"))
+        return parse_if(tokens, context, out_expr, out_ret_type);
+    if (lstr_str_eq(name, "while"))
+        return parse_while(tokens, context, out_expr, out_ret_type);
+
+    { u32 index; if (is_builtin((*tokens)->val, &index))
+        return parse_expr_builtin(
+            tokens, context, index, out_expr, out_ret_type
+        );
+    }
+
+
     Type var_type;
     Ident ident;
 
-    if (!parse_var((*tokens)->val, *context, &var_type, &ident)) {
-        u32 index;
-        if (is_builtin((*tokens)->val, &index))
-            return parse_expr_builtin(tokens, context, index, out_expr, out_ret_type);
-        else error(*tokens, "unknown identifier");
-    }
+    if (!parse_var(name, *context, &var_type, &ident))
+        error(*tokens, "unknown identifier");
 
     Expr var_expr = make_expr_var(var_type.class, ident);
 
     bool is_call = (*tokens + 1)->class == TK_OPEN;
 
     if (is_call) {
-        if (var_type.class != TYPE_FN_PTR)
-            error(*tokens, "not a function");
+        if (var_type.class != TYPE_FUNCTION) error(*tokens, "not a function");
 
         parse_expr_call(
             tokens, context, var_expr, var_type, out_expr, out_ret_type
@@ -828,7 +912,7 @@ static void parse_tokens(const Token ** tokens, void ** out_globals, Function **
     for (u32 i = 0; i < global_defs.len; i++) {
         Def * def = &global_defs.items[i];
         switch (def->type.class) {
-            case TYPE_FN_PTR: {
+            case TYPE_FUNCTION: {
                 Function * fn = aalloc(&code_arena, sizeof(Function));
                 *fn = parse_function_code(
                     def, global_defs.items, global_defs.len, NULL

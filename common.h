@@ -33,7 +33,10 @@ typedef enum {
     OP_CALL,
     OP_VAR,
     OP_ASSIGN,
-    OP_BUILTIN
+    OP_BUILTIN,
+    OP_IF,
+    OP_IF_ELSE,
+    OP_WHILE,
 } ExprClass;
 
 
@@ -45,9 +48,6 @@ typedef enum {
     B_DIV_I,
     B_ADD_VI,
     B_MUL_VI,
-    B_IF,
-    B_IF_ELSE,
-    B_WHILE,
     B_SEQ,
     B_PRINT_I
 } BuiltinClass;
@@ -62,11 +62,19 @@ typedef struct {
 
 typedef i32 Integer;
 
+typedef LStr String;
+
 typedef struct { u32 stack_size; Expr body; } Function;
 
 typedef struct { Ident ident; } OpVar;
 
 typedef struct { Ident ident; Expr val; } OpAssign;
+
+typedef struct { Expr cond, while_expr; } OpWhile;
+
+typedef struct { Expr cond, if_expr; } OpIf;
+
+typedef struct { Expr cond, if_expr, else_expr; } OpIfElse;
 
 
 typedef struct {
