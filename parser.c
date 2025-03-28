@@ -21,6 +21,24 @@
 #define sof sizeof
 
 
+
+/* Receval Types
+ *------------------------------------------------------------------------------
+ */
+
+typedef enum {
+    TYPE_NONE,
+    TYPE_FN_PTR,
+    TYPE_INT,
+    TYPE_STR,
+} TypeClass;
+
+
+static u32 type_sizes[] = {
+    [TYPE_INT] = sizeof(Integer),
+    [TYPE_FN_PTR] = sizeof(void *)
+};
+
 typedef struct Type {
     TypeClass class;
     void * data;
@@ -33,6 +51,11 @@ typedef struct {
     /* and then args array is stored immediately after this in memory (trust) */
 }  FunctionTypeData;
 
+
+
+/* Definition Types
+ *------------------------------------------------------------------------------
+ */
 
 /* we don't need ident because ident is just offset + location, and location is
  * which array the def is stored in */
@@ -57,12 +80,22 @@ typedef struct {
 typedef da(Def) DefList;
 
 
+
+/* Memory Arenas
+ *------------------------------------------------------------------------------
+ */
+
 /* freed after parsing */
 static Arena parser_arena;
 
 /* freed after execution */
 static Arena code_arena;
 
+
+
+/* Error Handling
+ *------------------------------------------------------------------------------
+ */
 
 static void error(Token const * tk, char * msg) {
     fprintf(
@@ -143,6 +176,12 @@ static TypeClass lstr_to_type_class(LStr str) {
  * -----------------------------------------------------------------------------
  */
 
+static u32 sizeof_type(int type_class) {
+    u32 size = type_sizes[type_class];
+    ASSERT(size <= TYPE_MAX_SIZE);
+    return size;
+}
+
 static Type * get_ret_type(Type function) {
     ASSERT(function.class == TYPE_FN_PTR);
     return &((FunctionTypeData *) function.data)->ret_type;
@@ -213,10 +252,10 @@ static bool type_eq(const Type * a, const Type * b) {
 static Expr make_expr_literal(TypeClass type_class, void ** val_ptr) {
     Expr expr = {
         .class = LITERAL,
-        .ret_class = type_class,
+        .ret_size = sizeof_type(type_class),
         .expr = aalloc(&code_arena, sof(Literal))
     };
-    Literal literal = { .val = aalloc(&code_arena, sof_type[type_class]) };
+    Literal literal = { .val = aalloc(&code_arena, sizeof_type(type_class)) };
     *val_ptr = literal.val;
     *(Literal *)(expr.expr) = literal;
     return expr;
@@ -224,7 +263,11 @@ static Expr make_expr_literal(TypeClass type_class, void ** val_ptr) {
 
 
 static Expr make_expr_builtin(BuiltinClass class, TypeClass ret_class, OpBuiltin ** op_ptr) {
-    Expr expr = { OP_BUILTIN, ret_class, aalloc(&code_arena, sof(OpBuiltin)) };
+    Expr expr = {
+        .class = OP_BUILTIN,
+        .ret_size = sizeof_type(ret_class),
+        .expr = aalloc(&code_arena, sof(OpBuiltin))
+    };
     *op_ptr = expr.expr;
     **op_ptr = (OpBuiltin) { .class = class };
     return expr;
@@ -232,7 +275,11 @@ static Expr make_expr_builtin(BuiltinClass class, TypeClass ret_class, OpBuiltin
 
 
 static Expr make_expr_call(Expr fn, TypeClass ret_class, OpCall ** op_ptr) {
-    Expr expr = { OP_CALL, ret_class, aalloc(&code_arena, sof(OpCall)) };
+    Expr expr = {
+        .class = OP_CALL, 
+        .ret_size = sizeof_type(ret_class),
+        .expr = aalloc(&code_arena, sof(OpCall))
+    };
     *op_ptr = expr.expr;
     **op_ptr = (OpCall) { .fn = fn };
     return expr;
@@ -240,7 +287,11 @@ static Expr make_expr_call(Expr fn, TypeClass ret_class, OpCall ** op_ptr) {
 
 
 static Expr make_expr_var(TypeClass type_class, Ident ident) {
-    Expr expr = { OP_VAR, type_class, aalloc(&code_arena, sof(OpVar)) };
+    Expr expr = {
+        .class = OP_VAR,
+        .ret_size = sizeof_type(type_class),
+        .expr = aalloc(&code_arena, sof(OpVar))
+    };
     OpVar * op = expr.expr;
     op->ident = ident;
     return expr;
@@ -249,8 +300,9 @@ static Expr make_expr_var(TypeClass type_class, Ident ident) {
 
 static Expr make_expr_assignment(Type type, Ident ident, Expr val) {
     Expr expr = (Expr) {
-        OP_ASSIGN,
-        type.class, aalloc(&code_arena, sof(OpAssign))
+        .class = OP_ASSIGN,
+        .ret_size = sizeof_type(type.class),
+        .expr = aalloc(&code_arena, sof(OpAssign))
     };
     *(OpAssign*)expr.expr = (OpAssign) { ident, val };
     return expr;
@@ -265,7 +317,7 @@ static Expr make_expr_assignment(Type type, Ident ident, Expr val) {
 static Ident add_local(Context * ctx, LStr name, Type type) {
     u32 offset = ctx->locals.len ?
         ctx->locals.items[ctx->locals.len - 1].offset
-        + sof_type[ctx->locals.items[ctx->locals.len - 1].type.class] : 0;
+        + sizeof_type(ctx->locals.items[ctx->locals.len - 1].type.class) : 0;
 
     Ident ident = ident_new(LOCAL, offset);
 
@@ -292,13 +344,13 @@ static void create_param_defs(const Def * function_def, Def * buf) {
             .name = names[i], .type = types[i],
             .offset = offset, .init = NULL,
         };
-        offset += sof_type[types[i].class];
+        offset += sizeof_type(types[i].class);
     } 
 }
 
 
 #define defs_size(list) \
-        ((list).len ? (list).items[(list).len - 1].offset + sof_type[(list).items[(list).len - 1].type.class] : 0)
+        ((list).len ? (list).items[(list).len - 1].offset + sizeof_type((list).items[(list).len - 1].type.class) : 0)
 
 
 

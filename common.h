@@ -19,30 +19,7 @@ typedef struct {
     u32 len;
 } LStr;
 
-
-
-/* Receval Types
- *------------------------------------------------------------------------------
- */
-
-/* TypeClass defines the type's size on the stack but does not
- * include the full type information. see parse.c */
-typedef enum {
-    TYPE_NONE = 0,
-    TYPE_FN_PTR,
-    TYPE_INT,
-    TYPE_STR,
-} TypeClass;
-
-
 #define TYPE_MAX_SIZE sizeof(void *)
-
-static u32 sof_type[] = {
-    [TYPE_INT] = sizeof(Integer),
-    [TYPE_FN_PTR] = sizeof(void *)
-};
-
-
 
 /* Receval Expressions
  *------------------------------------------------------------------------------
@@ -72,7 +49,7 @@ typedef enum {
 
 typedef struct {
     ExprClass class;
-    TypeClass ret_class;
+    u32 ret_size;
     void * expr;
 } Expr;
 
@@ -113,11 +90,14 @@ typedef struct {
 
 #define ARRLEN(A) (sof(A)/sof(A[0]))
 
-
+#ifdef NDEBUG
+#define ASSERT(A) ((void) 0)
+#else
 #define ASSERT(A) do{ if (!(A)) {                                                      \
-    fprintf(stderr, "Assertion failed on %s:%d: %s = %d\n", __FILE__, __LINE__, #A, A);\
-    exit(1);                                                                           \
+    fprintf(stderr, "Assertion failed on %s:%d: %s\n", __FILE__, __LINE__, #A);\
+    exit(-1);                                                                           \
 }} while(0)
+#endif
 
 
 #define PANIC(...) do {                                  \

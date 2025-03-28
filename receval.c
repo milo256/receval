@@ -86,7 +86,7 @@ void eval_expr(
     OpCall * call;
     OpBuiltin * builtin;
     Literal * lit;
-    u32 ret_size = sof_type[expr->ret_class];
+    u32 ret_size = expr->ret_size;
     switch (expr->class) {
         case OP_VAR: case OP_ASSIGN:
             var = OP_VAR ? ((OpVar *) expr->expr)->ident : ((OpAssign *) expr->expr)->ident;
@@ -112,7 +112,7 @@ void eval_expr(
             void * arg_ptr = new_locals;
 
             for (u32 i = 0; i < call->args_len; i++) {
-                u32 arg_size = sof_type[call->args[i].ret_class];
+                u32 arg_size = call->args[i].ret_size;
                 eval_expr(
                     &call->args[i], globals, locals,
                     arg_ptr
@@ -138,7 +138,7 @@ void eval_expr(
 
 
 int eval_main(Function * fn, void * globals) {
-    void * ret_ptr = malloc(sof_type[TYPE_INT]);
+    void * ret_ptr = malloc(sizeof(Integer));
 
     void * locals = malloc(fn->stack_size);
 
