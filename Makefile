@@ -1,20 +1,28 @@
 CC := gcc
+ASAN := 1
+RELEASE := 0
+APP_NAME := receval
 
 CFLAGS := -std=c99 -Wall -Wextra -Wno-missing-braces
+LDFLAGS :=
+DEBUGFLAGS := -g -O0
+RELEASEFLAGS := -g -O0
 
-RELEASE := 0
-LDFLAGS := -fsanitize=address 
-APP_NAME := receval
 
 SRCS := receval.c parser.c tokenizer.c utils.c
 HEADERS := common.h ident.h arena.h da.h tokenizer.h parser.h
 OBJDIR := obj
 OBJS = $(patsubst %.c, $(OBJDIR)/%.o, $(SRCS))
 
+
 ifeq ($(RELEASE), 1)
-	CFLAGS += -g -O3 -D NDEBUG
+	CFLAGS += $(RELEASEFLAGS)
 else
-	CFLAGS += -g -O0 -fsanitize=address
+	CFLAGS += $(DEBUGFLAGS)
+ifeq ($(ASAN), 1)
+	CFLAGS += -fsanitize=address
+	LDFLAGS += -fsanitize=address
+endif
 endif
 
 all: $(OBJS)
