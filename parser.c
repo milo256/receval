@@ -34,8 +34,8 @@ typedef struct {
 }  FunctionTypeData;
 
 
-/* we don't need ident because ident is just offset + location,
- * and location is which array the def is stored in */
+/* we don't need ident because ident is just offset + location, and location is
+ * which array the def is stored in */
 typedef struct {
     LStr name, * param_names; /* param_names only used for functions */
     Type type;
@@ -65,7 +65,10 @@ static Arena code_arena;
 
 
 static void error(Token const * tk, char * msg) {
-    fprintf(stderr, "Receval: Error on %d:%d: %s\n", tk->dbug_line, tk->dbug_column, msg);
+    fprintf(
+        stderr, "Receval: Error on %d:%d: %s\n",
+        tk->dbug_line, tk->dbug_column, msg
+    );
     char * at = tk->val.chars;
     char * line_start = at - tk->dbug_column + 1;
     char * line_end = strchr(at, '\n');
@@ -244,6 +247,16 @@ static Expr make_expr_var(TypeClass type_class, Ident ident) {
 }
 
 
+static Expr make_expr_assignment(Type type, Ident ident, Expr val) {
+    Expr expr = (Expr) {
+        OP_ASSIGN,
+        type.class, aalloc(&code_arena, sof(OpAssign))
+    };
+    *(OpAssign*)expr.expr = (OpAssign) { ident, val };
+    return expr;
+}
+
+
 
 /* Definition Functions
  * -----------------------------------------------------------------------------
@@ -257,9 +270,8 @@ static Ident add_local(Context * ctx, LStr name, Type type) {
     Ident ident = ident_new(LOCAL, offset);
 
     Def def = {
-        .name = name,
-        .offset = var_offset(ident),
-        .type = type
+        .name = name, .type = type,
+        .offset = var_offset(ident)
     };
 
     da_append(ctx->locals, def);
@@ -326,6 +338,12 @@ static Integer lstr_to_int(LStr str) {
  * -----------------------------------------------------------------------------
  */
 
+#define skip(token_ptr, token_class) ASSERT((token_ptr)++->class == (token_class))
+
+#define skip_expect(token_ptr, token_class, ...) \
+    if ((token_ptr)++->class != (token_class)) error((token_ptr), __VA_ARGS__)
+
+
 /* TODO: implement :P */
 static Type parse_type(const Token ** token) {
     Type ret = { lstr_to_type_class((*token)->val), NULL };
@@ -335,13 +353,13 @@ static Type parse_type(const Token ** token) {
 
 
 static void parse_expr(
-    Token const ** tokens, Context * context,
+    const Token ** tokens, Context * context,
     Expr * out_expr, Type * out_ret_type
 );
 
 
 static void parse_call_params(
-    Token const ** tokens, Context * context,
+    const Token ** tokens, Context * context,
     Type * expected_param_types, u32 expected_param_count,
     Expr ** out_params, u32 * out_param_count
 ) {
@@ -435,8 +453,122 @@ static bool parse_var(
 }
 
 
+static void parse_expr_builtin(
+    const Token ** tokens, Context * context, int class,
+    Expr * out_expr, Type * out_ret_type
+) {
+    OpBuiltin * op;
+    Type * arg_types;
+    
+    *out_expr = make_expr_builtin(class, TYPE_INT, &op);
+
+    if ((*tokens)->class == TK_CB_OPEN) ASSERT(class == B_SEQ);
+    else {
+        skip(*tokens, TK_IDENT);
+        if ((*tokens)->class != TK_OPEN) error(*tokens, "expected `(`");
+    }
+
+    parse_variadic_call_params(
+        tokens, context, &op->args, &arg_types, &op->args_len
+    );
+
+    *out_ret_type = make_type_int();
+    (*tokens)++;
+}
+
+
+static void parse_expr_call(
+    const Token ** tokens, Context * context, Expr fn_expr, Type fn_type,
+    Expr * out_expr, Type * out_ret_type
+) {
+    OpCall * call;
+    *out_expr = make_expr_call(fn_expr, get_ret_type(fn_type)->class, &call);
+ 
+    skip(*tokens, TK_IDENT);
+    parse_call_params(
+        tokens, context, get_param_types(fn_type), get_param_count(fn_type),
+        &call->args, &call->args_len
+    ); 
+
+    *out_ret_type = *get_ret_type(fn_type);
+    skip(*tokens, TK_CLOSE);
+}
+
+
+static void parse_ident(
+    const Token ** tokens, Context * context,
+    Expr * out_expr, Type * out_ret_type
+) {
+    Type var_type;
+    Ident ident;
+
+    if (!parse_var((*tokens)->val, *context, &var_type, &ident)) {
+        BuiltinClass bclass;
+        if ((bclass = lstr_to_builtin((*tokens)->val)) != B_NONE)
+            return parse_expr_builtin(tokens, context, bclass, out_expr, out_ret_type);
+        else error(*tokens, "unknown identifier");
+    }
+
+    Expr var_expr = make_expr_var(var_type.class, ident);
+
+    bool is_call = (*tokens + 1)->class == TK_OPEN;
+
+    if (is_call) {
+        if (var_type.class != TYPE_FN_PTR)
+            error(*tokens, "not a function");
+
+        parse_expr_call(
+            tokens, context, var_expr, var_type, out_expr, out_ret_type
+        );
+    } else {
+        *out_expr = var_expr;
+        *out_ret_type = var_type;
+        skip(*tokens, TK_IDENT);
+    }
+}
+
+
+static void parse_expr_assign(
+    const Token ** tokens, Context * context,
+    Expr * out_expr, Type * out_ret_type
+) {
+    skip(*tokens, TK_ASSIGN);
+
+    if ((*tokens)->class != TK_IDENT)
+        error(*tokens, "expected identifier");
+
+    const Token * var_token = *tokens;
+    const LStr var_name = var_token->val;
+
+    skip(*tokens, TK_IDENT);
+
+    Expr val;
+    Type val_type;
+    parse_expr(tokens, context, &val, &val_type);
+
+    Type var_type;
+    Ident var_ident;
+
+    const bool var_exists = parse_var(var_name, *context, &var_type, &var_ident);
+
+    if (var_exists) {
+        if (!type_eq(&var_type, &val_type))
+            error(var_token, "mismatched types");
+    } else {
+        if (lstr_to_builtin(var_name) != B_NONE)
+            error(var_token, "not a valid identifier");
+
+        var_type = val_type;
+        var_ident = add_local(context, var_name, var_type);
+    }
+
+    *out_expr = make_expr_assignment(var_type, var_ident, val);
+    *out_ret_type = var_type;
+}
+
+
 static void parse_expr(
-    Token const ** tokens, Context * context,
+    const Token ** tokens, Context * context,
     Expr * out_expr, Type * out_ret_type
 ) {
     switch ((*tokens)->class) {
@@ -446,108 +578,16 @@ static void parse_expr(
             *out_expr = make_expr_literal(TYPE_INT, (void **) &value_ptr);
             *value_ptr = lstr_to_int((*tokens)->val);
             (*tokens)++;
-            return;
-        } case TK_CB_OPEN: {
-            OpBuiltin * op;
-            *out_expr = make_expr_builtin(B_SEQ, TYPE_INT, &op);
-            Type * arg_types;
-            parse_variadic_call_params(
-                tokens, context, &op->args, &arg_types, &op->args_len
-            );
-            *out_ret_type = make_type_int();
-            (*tokens)++;
-            return;
-        } case TK_IDENT: {
-            /* ident as expr if not a builtin is a variable, maybe a function call */
-            Type var_type;
-            Ident ident;
-
-            BuiltinClass bclass = lstr_to_builtin((*tokens)->val);
-
-            if (bclass != B_NONE) {
-                OpBuiltin * op;
-                *out_expr = make_expr_builtin(bclass, TYPE_INT, &op);
-                (*tokens)++;
-                if ((*tokens)->class != TK_OPEN) error(*tokens, "expected `(`");
-                Type * arg_types;
-                parse_variadic_call_params(
-                    tokens, context, &op->args, &arg_types, &op->args_len
-                );
-                *out_ret_type = make_type_int();
-                (*tokens)++;
-                return;
-            }
-
-            if (!parse_var(
-                (*tokens)->val, *context,
-                &var_type, &ident
-            )) error(*tokens, "unknown identifier");
-
-            Expr var_expr = make_expr_var(var_type.class, ident);
-
-            if ((*tokens)[1].class != TK_OPEN) {
-                *out_expr = var_expr;
-                *out_ret_type = var_type;
-                (*tokens)++;
-                return;
-            }
-
-            if (var_type.class != TYPE_FN_PTR)
-                error(*tokens + 1, "not a function");
-
-            OpCall * call;
-            *out_expr = make_expr_call(var_expr, get_ret_type(var_type)->class, &call);
-
-            
-            Token const * token_ptr = *tokens + 1;
-            parse_call_params(
-                &token_ptr, context, get_param_types(var_type), get_param_count(var_type),
-                &call->args, &call->args_len
-            ); 
-
-            *out_ret_type = *get_ret_type(var_type);
-
-            *tokens = token_ptr + 1;
-
-            return;
-        } case TK_ASSIGN: {
-            (*tokens)++;
-            if ((*tokens)->class != TK_IDENT)
-                error(*tokens + 1, "expected identifier");
-
-            LStr var_name = (*tokens)->val;
-            (*tokens)++;
-
-            Expr val;
-            Type val_type;
-            parse_expr(
-                tokens, context,
-                &val, &val_type
-            );
-            
-
-            Type var_type;
-            Ident var_ident;
-
-            if (parse_var(
-                var_name, *context, &var_type, &var_ident
-            )) {
-                if (!type_eq(&var_type, &val_type))
-                    error(*tokens + 2, "mismatched types");
-            } else {
-                var_type = val_type;
-                var_ident = add_local(context, var_name, var_type);
-            }
-
-
-            Expr expr = (Expr) { OP_ASSIGN, var_type.class, malloc(sof(OpAssign)) };
-            *(OpAssign*)expr.expr = (OpAssign) {
-                .ident = var_ident,
-                .val = val,
-            };
-            *out_expr = expr;
-            *out_ret_type = var_type;
-            return; 
+            break;
+        } case TK_CB_OPEN:
+            parse_expr_builtin(tokens, context, B_SEQ, out_expr, out_ret_type);
+            break;
+        case TK_IDENT:
+            parse_ident(tokens, context, out_expr, out_ret_type);
+            break;
+        case TK_ASSIGN: {
+            parse_expr_assign(tokens, context, out_expr, out_ret_type);
+            break;
         }
         default: error(*tokens, "expected expression");
     }
@@ -618,31 +658,30 @@ static void parse_global_def(const Token ** tokens, DefList * globals) {
     const Token * init_token;
     token++;
     if (token->class == TK_FUNCTION) {
-        token++;
-        if (token->class != TK_ARROW) error(token, "expected return type `-> <type>`");
+        skip(token, TK_FUNCTION);
+        skip_expect(token, TK_ARROW, "expected return type `-> <type>`");
         
-        token++;
         const Token * ret_type_token = token;
         Type ret_type = parse_type(&token);
         if (ret_type.class == TYPE_NONE) error(ret_type_token, "expected type");
 
         u32 param_count = parser_count_params(token);
+        skip(token, TK_OPEN);
+        
         param_names = aalloc(&code_arena, sizeof(LStr) * param_count);
-        token++;
 
         type = make_type_fn_ptr(ret_type, param_count); 
         for (u32 i = 0; i < param_count; i++) {
             get_param_types(type)[i] = parse_type(&token);
             param_names[i] = token++->val;
         }
-        ASSERT(token->class == TK_CLOSE);
-        token++;
+        skip(token, TK_CLOSE);
         init_token = token;
         skip_to_end(&token);
     } else if (token->class == TK_INT) {
         type = (Type) { .class = TYPE_INT };
         init_token = token;
-        token++;
+        skip(token, TK_INT);
     } else error(token, "value expected for global definition");
     
     Def def = (Def) {
