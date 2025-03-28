@@ -10,9 +10,6 @@ typedef uint32_t u32;
 typedef int32_t i32;
 typedef uint8_t u8;
 typedef int8_t i8;
-typedef i32 Integer;
-typedef u32 Ident;
-
 
 typedef struct {
     char * chars;
@@ -21,12 +18,18 @@ typedef struct {
 
 #define TYPE_MAX_SIZE sizeof(void *)
 
+
+
 /* Receval Expressions
  *------------------------------------------------------------------------------
  */
 
+typedef u32 Ident;
+
 typedef enum {
-    LITERAL,
+    INT_LITERAL,
+    STR_LITERAL,
+    FN_LITERAL,
     OP_CALL,
     OP_VAR,
     OP_ASSIGN,
@@ -35,15 +38,18 @@ typedef enum {
 
 
 typedef enum {
+    B_NONE,
     B_ADD_I,
     B_SUB_I,
     B_MUL_I,
     B_DIV_I,
+    B_ADD_VI,
+    B_MUL_VI,
     B_IF,
+    B_IF_ELSE,
     B_WHILE,
     B_SEQ,
-    B_PRINT_I,
-    B_NONE
+    B_PRINT_I
 } BuiltinClass;
 
 
@@ -54,13 +60,13 @@ typedef struct {
 } Expr;
 
 
+typedef i32 Integer;
+
 typedef struct { u32 stack_size; Expr body; } Function;
 
 typedef struct { Ident ident; } OpVar;
 
 typedef struct { Ident ident; Expr val; } OpAssign;
-
-typedef struct { void * val; } Literal;
 
 
 typedef struct {
@@ -113,5 +119,6 @@ typedef struct {
 
 #define LSTR(cstr) (LStr) { .chars = cstr, .len = strlen(cstr) }
 
-int lstr_eq(LStr a, LStr b);
+bool lstr_str_eq(const LStr a, const char * b);
+bool lstr_eq(const LStr a, const LStr b);
 

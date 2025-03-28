@@ -17,59 +17,82 @@ void eval_function(Function *, void *, void *, void *);
 
 void eval_expr(Expr *, void *, void *, void *);
 
+#define seval_expr(expr, ret_ptr) eval_expr((expr), globals, locals, (ret_ptr))
+
+#define do_2op(type, op) do { \
+    ASSERT(param_count == 2); \
+    type lhs, rhs; \
+    seval_expr(params, &lhs); \
+    seval_expr(params + 1, &rhs); \
+    *(type *)ret_ptr = lhs op rhs; \
+} while(0)
+
+#define do_vop(type, op) do { \
+    type acc = 0; \
+    for (u32 i = 0; i < param_count; i++) { \
+        type new; \
+        seval_expr(params + i, &new); \
+        acc = acc op new; \
+    } \
+    *(type *)ret_ptr = acc; \
+} while(0)
+
 
 void eval_builtin(
     OpBuiltin * builtin, void * globals, void * locals, void * ret_ptr
 ) {
-    Expr * args = builtin->args;
-    u32 args_len = builtin->args_len;
+    Expr * params = builtin->args;
+    u32 param_count = builtin->args_len;
 
     Integer condition;
     switch (builtin->class) {
-        case B_ADD_I: case B_SUB_I: case B_MUL_I: case B_DIV_I: 
-            ASSERT(args_len > 1);
-            if (args_len == 2) {
-                Integer lhs, rhs;
-                eval_expr(args, globals, locals, &lhs);
-                eval_expr(&args[1], globals, locals, &rhs);
-                switch (builtin->class) {
-                    case B_ADD_I: *(Integer *)ret_ptr = lhs + rhs; break;
-                    case B_SUB_I: *(Integer *)ret_ptr = lhs - rhs; break;
-                    case B_MUL_I: *(Integer *)ret_ptr = lhs * rhs; break;
-                    case B_DIV_I: *(Integer *)ret_ptr = lhs / rhs; break;
-                    default: PANIC();
-                }
-            } else PANIC();
+        case B_ADD_I: 
+            do_2op(Integer, +);
+            break;
+        case B_SUB_I:
+            do_2op(Integer, -);
+            break;
+        case B_MUL_I:
+            do_2op(Integer, *);
+            break;
+        case B_DIV_I: 
+            do_2op(Integer, /);
+            break;
+        case B_ADD_VI:
+            do_vop(Integer, +);
+            break;
+        case B_MUL_VI:
+            do_vop(Integer, *);
             break;
         case B_IF:
-            ASSERT(args_len > 1 && args_len < 4);
+            ASSERT(param_count > 1 && param_count < 4);
 
-            eval_expr(args, globals, locals, &condition);
+            eval_expr(params, globals, locals, &condition);
             if (condition)
-                eval_expr(&args[1], globals, locals, ret_ptr);
-            else if (args_len > 2)
-                eval_expr(&args[2], globals, locals, ret_ptr);
+                eval_expr(&params[1], globals, locals, ret_ptr);
+            else if (param_count > 2)
+                eval_expr(&params[2], globals, locals, ret_ptr);
             else
                 memset(ret_ptr, 0, sizeof(Integer));
             break;
         case B_WHILE:
-            ASSERT(args_len == 2);
+            ASSERT(param_count == 2);
             
-            eval_expr(args, globals, locals, &condition);
+            eval_expr(params, globals, locals, &condition);
             while (condition) {
-                eval_expr(&args[1], globals, locals, ret_ptr);
-                eval_expr(args, globals, locals, &condition);
+                eval_expr(&params[1], globals, locals, ret_ptr);
+                eval_expr(params, globals, locals, &condition);
             }
             break;
         case B_SEQ:
-            ASSERT(args_len > 0);
-            for (u32 i = 0; i < args_len - 1; i++) {
-                eval_expr(&args[i], globals, locals, ret_ptr);
+            ASSERT(param_count > 0);
+            for (u32 i = 0; i < param_count - 1; i++) {
+                eval_expr(&params[i], globals, locals, ret_ptr);
             }
-            eval_expr(&args[args_len-1], globals, locals, ret_ptr);
+            eval_expr(&params[param_count-1], globals, locals, ret_ptr);
             break;
         case B_PRINT_I:
-            eval_expr(args, globals, locals, ret_ptr);
+            eval_expr(params, globals, locals, ret_ptr);
             printf("%d\n", *((Integer *) ret_ptr));
             break;
             
@@ -85,7 +108,6 @@ void eval_expr(
     Ident var;
     OpCall * call;
     OpBuiltin * builtin;
-    Literal * lit;
     u32 ret_size = expr->ret_size;
     switch (expr->class) {
         case OP_VAR: case OP_ASSIGN:
@@ -127,9 +149,11 @@ void eval_expr(
 
             eval_builtin(builtin, globals, locals, ret_ptr);
             break; 
-        case LITERAL:
-            lit = (Literal *) expr->expr;
-            memcpy(ret_ptr, lit->val, ret_size);
+        case INT_LITERAL:
+            *(Integer *) ret_ptr = *(Integer *) expr->expr;
+            break;
+        case FN_LITERAL:
+            *(Function *) ret_ptr = *(Function *) expr->expr;
             break;
         default:
             PANIC();

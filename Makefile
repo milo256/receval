@@ -1,6 +1,6 @@
 CC := gcc
 
-CFLAGS := -std=c99 -Wall -Wextra
+CFLAGS := -std=c99 -Wall -Wextra -Wno-missing-braces
 
 RELEASE := 0
 LDFLAGS := -fsanitize=address 

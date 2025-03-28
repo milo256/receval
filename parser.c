@@ -142,9 +142,8 @@ static int delim_value(const Token * token) {
 }
 
 
-static int opposite_delim(const Token * token) {
-    int c = token->class;
-    return (c % 2)? c + 1 : c - 1;
+static u32 opposite_delim(u32 class) {
+    return (class % 2)? class + 1 : class - 1;
 }
 
 
@@ -249,15 +248,13 @@ static bool type_eq(const Type * a, const Type * b) {
  * -----------------------------------------------------------------------------
  */
 
-static Expr make_expr_literal(TypeClass type_class, void ** val_ptr) {
+static Expr make_expr_int_literal(Integer val) {
     Expr expr = {
-        .class = LITERAL,
-        .ret_size = sizeof_type(type_class),
-        .expr = aalloc(&code_arena, sof(Literal))
+        .class = INT_LITERAL,
+        .ret_size = sizeof(val),
+        .expr = aalloc(&code_arena, sizeof(val))
     };
-    Literal literal = { .val = aalloc(&code_arena, sizeof_type(type_class)) };
-    *val_ptr = literal.val;
-    *(Literal *)(expr.expr) = literal;
+    *(Integer *) expr.expr = val;
     return expr;
 }
 
@@ -358,22 +355,85 @@ static void create_param_defs(const Def * function_def, Def * buf) {
  * -----------------------------------------------------------------------------
  */
 
-static BuiltinClass lstr_to_builtin(const LStr str) {
-    static char * builtin_names[] = {
-        [B_ADD_I] = "+",
-        [B_SUB_I] = "-",
-        [B_MUL_I] = "*",
-        [B_DIV_I] = "/",
-        [B_IF] = "if",
-        [B_WHILE] = "while",
-        [B_SEQ] = "seq",
-        [B_PRINT_I] = "print"
-    };
+#define B_IDX_SEQ 0
 
-    for (BuiltinClass i = 0; i < ARRLEN(builtin_names); i++)
-        if (lstr_eq(str, LSTR(builtin_names[i]))) return i;
+typedef struct {
+    char * name;
+    struct {
+        char * type_sh; /*shorthand*/
+        u32 class;
+    } variants[4];
+} BuiltinProto;
 
-    return B_NONE;
+
+static const BuiltinProto builtin_protos[] = {
+    "seq",   { "va", B_SEQ },
+    "+",     { "ii", B_ADD_I, "vi", B_ADD_VI,},
+    "*",     { "ii", B_MUL_I, "vi", B_MUL_VI },
+    "-",     { "ii", B_SUB_I },
+    "/",     { "ii", B_DIV_I },
+    "print", { "i",  B_PRINT_I },
+    "if",    { "ia", B_IF, "iaa", B_IF_ELSE },
+    "while", { "ia", B_WHILE, }
+};
+
+
+static u32 match_type_sh(const char * sh, Type type) {
+    switch (*sh) {
+        case 'a':
+            return 1;
+        case 'i':
+            return (type.class == TYPE_INT);
+        case 'p':
+            if (type.class != TYPE_FN_PTR) return 0;
+            u32 param_count = *(++sh);
+            sh++;
+            if (get_param_count(type) != param_count) return 0;
+            for (u32 i = 0; i < param_count; i++)
+                if (!match_type_sh(sh + i, get_param_types(type)[i])) return 0;
+
+            return 1;
+    }
+    return 0;
+}
+
+
+static bool match_param_types_sh(const char * sh, const Type * types, u32 count) {
+    const char * vtype = NULL;
+    for (u32 i = 0; i < count; i++) {
+        if (*sh == 'v') vtype = sh + 1;
+        u32 n;
+        if (vtype)
+            n = match_type_sh(vtype, types[i]);
+        else {
+            n = match_type_sh(sh, types[i]);
+            sh += n;
+        }
+        if (!n) return 0;
+    }
+    return (vtype) || *sh == 0;
+}
+
+
+static bool is_builtin(const LStr name, u32 * out_index) {
+    for (u32 i = 0; i < ARRLEN(builtin_protos); i++)
+        if (lstr_str_eq(name, builtin_protos[i].name)) {
+            if (out_index) *out_index = i;
+            return 1;
+        }
+
+    return 0;
+}
+
+
+static u32 get_builtin_class(u32 index, const Type * param_types, u32 param_count) {
+    const BuiltinProto * proto = &builtin_protos[index];
+    char * type_sh;
+    for (u32 i = 0; (type_sh = proto->variants[i].type_sh); i++)
+        if (match_param_types_sh(type_sh, param_types, param_count))
+            return proto->variants[i].class;
+
+    return B_NONE; 
 }
 
 
@@ -418,7 +478,7 @@ static void parse_call_params(
     Expr * params = aalloc(&code_arena, expected_param_count * sizeof(Expr));
 
     ASSERT(delim_value(*tokens) > 0);
-    TkClass close = opposite_delim(*tokens);
+    TkClass close = opposite_delim((*tokens)->class);
     (*tokens)++;
 
     u32 i = 0;
@@ -454,7 +514,7 @@ static void parse_variadic_call_params(
     da(Type) param_types = {};
 
     ASSERT(delim_value(*tokens) > 0);
-    TkClass close = opposite_delim(*tokens);
+    TkClass close = opposite_delim((*tokens)->class);
     (*tokens)++;
 
     u32 i = 0;
@@ -506,26 +566,39 @@ static bool parse_var(
 
 
 static void parse_expr_builtin(
-    const Token ** tokens, Context * context, int class,
+    const Token ** tokens, Context * context, int index,
     Expr * out_expr, Type * out_ret_type
 ) {
-    OpBuiltin * op;
-    Type * arg_types;
-    
-    *out_expr = make_expr_builtin(class, TYPE_INT, &op);
-
-    if ((*tokens)->class == TK_CB_OPEN) ASSERT(class == B_SEQ);
-    else {
+    u32 open = TK_OPEN;
+    if ((*tokens)->class == TK_CB_OPEN) {
+        open = TK_CB_OPEN;
+        ASSERT(index == B_IDX_SEQ);
+    } else {
         skip(*tokens, TK_IDENT);
         if ((*tokens)->class != TK_OPEN) error(*tokens, "expected `(`");
     }
+ 
+    const Token * params_start = *tokens;
 
+    Type * param_types;
+    Expr * params;
+    u32 param_count;
     parse_variadic_call_params(
-        tokens, context, &op->args, &arg_types, &op->args_len
+        tokens, context, &params, &param_types, &param_count
     );
+    
+    u32 class = get_builtin_class(index, param_types, param_count);
+    Type ret_type = make_type_int();
 
-    *out_ret_type = make_type_int();
-    (*tokens)++;
+    if (class == B_NONE) error(params_start, "incorrect parameters");
+    
+    OpBuiltin * op;
+    *out_expr = make_expr_builtin(class, ret_type.class, &op);
+    op->args = params;
+    op->args_len = param_count;
+
+    *out_ret_type = ret_type;
+    skip(*tokens, opposite_delim(open));
 }
 
 
@@ -555,9 +628,9 @@ static void parse_ident(
     Ident ident;
 
     if (!parse_var((*tokens)->val, *context, &var_type, &ident)) {
-        BuiltinClass bclass;
-        if ((bclass = lstr_to_builtin((*tokens)->val)) != B_NONE)
-            return parse_expr_builtin(tokens, context, bclass, out_expr, out_ret_type);
+        u32 index;
+        if (is_builtin((*tokens)->val, &index))
+            return parse_expr_builtin(tokens, context, index, out_expr, out_ret_type);
         else error(*tokens, "unknown identifier");
     }
 
@@ -607,7 +680,7 @@ static void parse_expr_assign(
         if (!type_eq(&var_type, &val_type))
             error(var_token, "mismatched types");
     } else {
-        if (lstr_to_builtin(var_name) != B_NONE)
+        if (is_builtin(var_name, NULL))
             error(var_token, "not a valid identifier");
 
         var_type = val_type;
@@ -624,15 +697,13 @@ static void parse_expr(
     Expr * out_expr, Type * out_ret_type
 ) {
     switch ((*tokens)->class) {
-        case TK_INT: {
-            Integer * value_ptr;
+        case TK_INT:
             *out_ret_type = make_type_int();
-            *out_expr = make_expr_literal(TYPE_INT, (void **) &value_ptr);
-            *value_ptr = lstr_to_int((*tokens)->val);
+            *out_expr = make_expr_int_literal(lstr_to_int((*tokens)->val));
             (*tokens)++;
             break;
-        } case TK_CB_OPEN:
-            parse_expr_builtin(tokens, context, B_SEQ, out_expr, out_ret_type);
+        case TK_CB_OPEN:
+            parse_expr_builtin(tokens, context, B_IDX_SEQ, out_expr, out_ret_type);
             break;
         case TK_IDENT:
             parse_ident(tokens, context, out_expr, out_ret_type);

@@ -9,8 +9,12 @@
  *------------------------------------------------------------------------------
  */
 
-int lstr_eq(const LStr a, const LStr b) {
+bool lstr_eq(const LStr a, const LStr b) {
     return a.len == b.len && !strncmp(a.chars, b.chars, MIN(a.len, b.len));
+}
+
+bool lstr_str_eq(const LStr a, const char * b) {
+    return !strncmp(a.chars, b, a.len);
 }
 
 
