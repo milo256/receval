@@ -5,6 +5,15 @@
 
 /* -- TOKENS -- */
 typedef enum {
+    TK_NONE,
+    /* opening delimiters are odd, closing even.
+     * corresponding delimiters 1 apart */
+    TK_OPEN     = 1,
+    TK_CLOSE    = 2, 
+    TK_SB_OPEN  = 3,
+    TK_SB_CLOSE = 4,
+    TK_CB_OPEN  = 5,
+    TK_CB_CLOSE = 6,
     TK_INT,
     TK_FLOAT,
     TK_STRING,
@@ -12,14 +21,7 @@ typedef enum {
     TK_ARROW,
     TK_IDENT,
     TK_ASSIGN,
-    TK_OPEN,
-    TK_CLOSE, 
-    TK_SB_OPEN,
-    TK_SB_CLOSE,
-    TK_CB_OPEN,
-    TK_CB_CLOSE,
-    TK_EOF,
-    TK_NONE
+    TK_EOF
 } TkClass;
 
 typedef struct {

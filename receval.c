@@ -13,7 +13,7 @@
  * you cast them to (void)? */
 const char DISCARD[TYPE_MAX_SIZE];
 
-int lstr_eq(LStr a, LStr b) {
+int lstr_eq(const LStr a, const LStr b) {
     return a.len == b.len && !strncmp(a.chars, b.chars, MIN(a.len, b.len));
 }
 
@@ -157,8 +157,7 @@ int main(int argc, char * argv[]) {
     char * filename = argc > 1 ? argv[1] : "demo.re";
     FILE * f = fopen(filename, "r");
 
-    if (!f)
-        PANIC();
+    if (!f) PANIC();
 
     fseek(f, 0, SEEK_END);
     u32 code_len = ftell(f);

@@ -44,9 +44,9 @@ int lstr_eq(LStr a, LStr b);
  * include the full type information. see parse.c */
 typedef enum {
     TYPE_NONE = 0,
-    TYPE_FN_PTR = 'f',
-    TYPE_INT = 'i',
-    TYPE_STR = 's',
+    TYPE_FN_PTR,
+    TYPE_INT,
+    TYPE_STR,
 } TypeClass;
 
 

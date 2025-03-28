@@ -12,6 +12,14 @@
     } \
     (da).items[(da).len++] = (item); } while(0) \
 
+#define da_next(da) (\
+        ( (da).len < (da).cap )?: \
+            ( (da).items = realloc( \
+                (da).items, sizeof((da).items[0]) * ((da).cap? (da).cap *= 2 : ((da).cap = 1)) \
+            ) ), \
+        &(da).items[(da).len++] \
+    ) \
+
 
 #define da_foreach(item_var, da) \
     if ((da).items) for(typeof((da).items[0]) * item_var = (da).items;  item_var < (da).items + (da).len; item_var++)

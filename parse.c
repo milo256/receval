@@ -53,22 +53,29 @@ typedef struct {
 
 typedef da(Def) DefList;
 
-static char * builtin_names[] = {
-    [B_ADD_I] = "+",
-    [B_SUB_I] = "-",
-    [B_MUL_I] = "*",
-    [B_DIV_I] = "/",
-    [B_IF] = "if",
-    [B_WHILE] = "while",
-    [B_SEQ] = "seq",
-    [B_PRINT_I] = "print"
-};
 
 /* freed after parsing */
 static Arena parser_arena;
 
 /* freed after execution */
 static Arena code_arena;
+
+static TypeClass lstr_to_type_class(LStr str) {
+    if (lstr_eq(str, LSTR("int"))) return TYPE_INT;
+    else if (lstr_eq(str, LSTR("str"))) return TYPE_STR;
+    else return TYPE_NONE;
+}
+
+static int delim_value(const Token * token) {
+    int c = token->class;
+    if (c > 0 && c <= TK_CB_CLOSE) return (c % 2)? 1 : -1;
+    else return 0;
+}
+
+static int opposite_delim(const Token * token) {
+    int c = token->class;
+    return (c % 2)? c + 1 : c - 1;
+}
 
 static Type * get_ret_type(Type function) {
     ASSERT(function.class == TYPE_FN_PTR);
@@ -144,7 +151,8 @@ static bool type_eq(const Type * a, const Type * b) {
     if (a->class != b->class) return false;
     if (a == b) return true;
     switch (a->class) {
-        case TYPE_INT: return true;
+        case TYPE_INT: case TYPE_STR:
+            return true;
         case TYPE_FN_PTR: {
             u32 alen = get_param_count(*a);
             u32 blen = get_param_count(*b);
@@ -198,31 +206,73 @@ static void parse_expr(
     Expr * out_expr, Type * out_ret_type
 );
 
-
-static void parse_call_params(
-    TkClass close,
-    Token const ** tokens,
-    Context * context,
-    Expr ** out_args, u32 * out_args_len
+static void parse_variadic_call_params(
+    Token const ** tokens, Context * context,
+    Expr ** out_params, Type ** out_param_types, u32 * out_param_count
 ) {
-    da(Expr) args = {};
+    da(Expr) params = {};
+    da(Type) param_types = {};
 
-    while((*tokens)->class != close) {
-        Expr arg;
-        Type arg_type;
+    ASSERT(delim_value(*tokens) > 0);
+    TkClass close = opposite_delim(*tokens);
+    (*tokens)++;
+
+    u32 i = 0;
+    for(; (*tokens)->class != close&& (*tokens)->class != TK_EOF; i++) {
+        Expr param;
+        Type param_type;
         parse_expr(
             tokens, context,
-            &arg, &arg_type
+            &param, &param_type
         );
-        da_append(args, arg);
+        da_append(params, param);
+        da_append(param_types, param_type);
     }
 
-    u32 n = args.len * sizeof(Expr);
-    *out_args = aalloc(&code_arena, n);
-    memcpy(*out_args, args.items, n);
-    *out_args_len = args.len;
+    *out_params = aalloc(&code_arena, i * sizeof(Expr));
+    *out_param_types = aalloc(&parser_arena, i * sizeof(Type));
+    *out_param_count = i;
 
-    da_dealloc(args);
+    memcpy(*out_params, params.items, i * sizeof(Expr));
+    memcpy(*out_param_types, param_types.items, i * sizeof(Type));
+
+    da_dealloc(params);
+    da_dealloc(param_types);
+}
+
+static void parse_call_params(
+    Token const ** tokens, Context * context,
+    Type * expected_param_types, u32 expected_param_count,
+    Expr ** out_params, u32 * out_param_count
+) {
+    Expr * params = aalloc(&code_arena, expected_param_count * sizeof(Expr));
+
+    ASSERT(delim_value(*tokens) > 0);
+    TkClass close = opposite_delim(*tokens);
+    (*tokens)++;
+
+    u32 i = 0;
+    for(;
+        (*tokens)->class != close
+        && (*tokens)->class != TK_EOF
+        && (i < expected_param_count);
+        i++
+    ) {
+        Type param_type;
+        const Token * param_token = *tokens;
+        parse_expr(
+            tokens, context,
+            &params[i], &param_type
+        );
+        if (!type_eq(&param_type, &expected_param_types[i]))
+            error(param_token, "mismatched parameter types");
+    }
+
+    if (i != expected_param_count)
+        error(*tokens + 2, "incorrect number of parameters provided");
+
+    *out_params = params;
+    *out_param_count = i;
 }
 
 static Ident add_local(Context * ctx, LStr name, Type type) {
@@ -242,28 +292,18 @@ static Ident add_local(Context * ctx, LStr name, Type type) {
     return ident;
 }
 
-static TypeClass lstr_to_type_class(LStr str) {
-    if (lstr_eq(str, LSTR("int"))) return TYPE_INT;
-    else return TYPE_NONE;
-}
-
-static int delim(const Token * token) {
-    if (token->class == TK_OPEN || token->class == TK_CB_OPEN) return 1;
-    else if (token->class == TK_CLOSE || token->class == TK_CB_CLOSE) return -1;
-    else return 0;
-}
 
 /* TODO: doesn't work for assignments not within a function call */
 static void skip_to_end(const Token ** token) {
     const Token * starting_token = *token;
-    if (delim(*token) < 1) {
+    if (delim_value(*token) < 1) {
         (*token)++;
-        if (delim(*token) < 1) return;
+        if (delim_value(*token) < 1) return;
     }
     (*token)++;
     for (u32 d = 1; d;) {
         if ((*token)->class == TK_EOF) error(starting_token, "missing closing delimiter");
-        d += delim(*token);
+        d += delim_value(*token);
         (*token)++;
     }
 }
@@ -318,10 +358,21 @@ static bool parse_var(
     return true;
 }
 
-static BuiltinClass lstr_to_builtin(LStr str) {
-    for (BuiltinClass i = 0; i < ARRLEN(builtin_names); i++) {
+static BuiltinClass lstr_to_builtin(const LStr str) {
+    static char * builtin_names[] = {
+        [B_ADD_I] = "+",
+        [B_SUB_I] = "-",
+        [B_MUL_I] = "*",
+        [B_DIV_I] = "/",
+        [B_IF] = "if",
+        [B_WHILE] = "while",
+        [B_SEQ] = "seq",
+        [B_PRINT_I] = "print"
+    };
+
+    for (BuiltinClass i = 0; i < ARRLEN(builtin_names); i++)
         if (lstr_eq(str, LSTR(builtin_names[i]))) return i;
-    }
+
     return B_NONE;
 }
 
@@ -347,9 +398,9 @@ static void parse_expr(
         } case TK_CB_OPEN: {
             OpBuiltin * op;
             *out_expr = make_expr_builtin(B_SEQ, TYPE_INT, &op);
-            (*tokens) += 1;
-            parse_call_params(
-                TK_CB_CLOSE, tokens, context, &op->args, &op->args_len
+            Type * arg_types;
+            parse_variadic_call_params(
+                tokens, context, &op->args, &arg_types, &op->args_len
             );
             *out_ret_type = make_type_int();
             (*tokens)++;
@@ -364,9 +415,11 @@ static void parse_expr(
             if (bclass != B_NONE) {
                 OpBuiltin * op;
                 *out_expr = make_expr_builtin(bclass, TYPE_INT, &op);
-                (*tokens) += 2;
-                parse_call_params(
-                    TK_CLOSE, tokens, context, &op->args, &op->args_len
+                (*tokens)++;
+                if ((*tokens)->class != TK_OPEN) error(*tokens, "expected `(`");
+                Type * arg_types;
+                parse_variadic_call_params(
+                    tokens, context, &op->args, &arg_types, &op->args_len
                 );
                 *out_ret_type = make_type_int();
                 (*tokens)++;
@@ -394,17 +447,11 @@ static void parse_expr(
             *out_expr = make_expr_call(var_expr, get_ret_type(var_type)->class, &call);
 
             
-            Token const * token_ptr = *tokens + 2;
+            Token const * token_ptr = *tokens + 1;
             parse_call_params(
-                TK_CLOSE, &token_ptr, context,
+                &token_ptr, context, get_param_types(var_type), get_param_count(var_type),
                 &call->args, &call->args_len
-            );
-            
-            //Type * expected_arg_types = get_arg_types(&var_type);
-            u32 expected_args_len = get_param_count(var_type);
-
-            if (expected_args_len != call->args_len)
-                error(*tokens + 2, "incorrect number of arguments provided");
+            ); 
 
             *out_ret_type = *get_ret_type(var_type);
 
@@ -454,12 +501,12 @@ static void parse_expr(
     }
 }
 
+
 static Function parse_function_code(
     const Def * def, const Def * global_defs, u32 globals_len,
     Type * out_type
 ) {
     Function fn;
-    Type ret_type;
 
     u32 param_count = get_param_count(def->type);
 
@@ -471,15 +518,18 @@ static Function parse_function_code(
     create_param_defs(def, ctx.locals.items);
     ctx.locals.len = param_count;
 
-    const Token * end_token = def->init;
+    const Token * token = def->init;
+    Type ret_type;
     parse_expr(
-        &end_token, &ctx,
+        &token, &ctx,
         &fn.body, &ret_type
     );
 
+    Type * expected_ret_type = get_ret_type(def->type);
+    if (!type_eq(&ret_type, expected_ret_type)) error(def->init, "mismatched return types");
+
     fn.stack_size = defs_size(ctx.locals);
-    if (out_type)
-        (*out_type = (Type) { .class = TYPE_FN_PTR, .data = NULL }); /* TODO: ARGS */
+    if (out_type) *out_type = def->type;
 
     da_dealloc(ctx.locals);
     return fn;
@@ -519,8 +569,9 @@ static void parse_global_def(const Token ** tokens, DefList * globals) {
         if (token->class != TK_ARROW) error(token, "expected return type `-> <type>`");
         
         token++;
+        const Token * ret_type_token = token;
         Type ret_type = parse_type(&token);
-        if (ret_type.class == TYPE_NONE) error(token, "expected type");
+        if (ret_type.class == TYPE_NONE) error(ret_type_token, "expected type");
 
         u32 param_count = parser_count_params(token);
         param_names = aalloc(&code_arena, sizeof(LStr) * param_count);
