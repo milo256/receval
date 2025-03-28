@@ -6,6 +6,7 @@
 #include <string.h>
 
 
+
 static u32 long_token_class(LStr str) {
     if (isdigit(str.chars[0]))
         return TK_INT;
@@ -15,8 +16,10 @@ static u32 long_token_class(LStr str) {
 }
 
 
-static u32 char_token_class(char ch) {
-    switch(ch) {
+static u32 symbolic_token_class(LStr str) {
+    if (str.len == 2 && str.chars[0] == '-' && str.chars[1] == '>')
+        return TK_ARROW;
+    else if (str.len == 1) switch(str.chars[0]) {
         case '=': return TK_ASSIGN;
         case '(': return TK_OPEN;
         case ')': return TK_CLOSE;
@@ -24,91 +27,183 @@ static u32 char_token_class(char ch) {
         case '}': return TK_CB_CLOSE;
         case '[': return TK_SB_OPEN;
         case ']': return TK_SB_CLOSE;
-        default: return TK_NONE;
     }
+    return TK_NONE;
+}
+
+enum {
+    CMT_NONE,
+    CMT_LINE,
+    CMT_BEGIN,
+    CMT_END,
+};
+
+static u32 comment_class(char * ch) {
+    if (ch[0] == '-' && ch[1] == '-') return CMT_LINE;
+    else if (ch[0] == '-' && ch[1] == '!') return CMT_BEGIN;
+    else if (ch[0] == '!' && ch[1] == '-') return CMT_END;
+    else return CMT_NONE;
+}
+
+static bool is_line_end(char ch) { return (!ch || ch == '\n' || ch == '\r'); }
+
+static bool is_whitespace(char ch) {
+    return (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r');
+}
+
+static bool is_splitting(char * ch) {
+    return
+        is_whitespace(*ch) || (!*ch) || (*ch == '"') || comment_class(ch) ||
+        symbolic_token_class((LStr) {ch, 1}) ||
+        symbolic_token_class((LStr) {ch, 2});
 }
 
 
-Token * tokenize(char * code, Arena * arena) {
-    #define make_token(class) (Token) { class, token_str, line, ts - line_start }
+enum {
+    PARSE_EOF,
+    PARSE_BLANK,
+    PARSE_NORMAL,
+    PARSE_CMT_LINE,
+    PARSE_CMT_MULTILINE,
+    PARSE_STRING,
+};
 
-    da(Token) token_list = {};
 
-    u32 line = 1, line_start = 0, ts = 0, tlen = 0;
-    char ch;
+typedef struct {
+    u32 parsing;
+    char * sptr, * eptr;
+    u32 line, col;
+} State;
 
-    LStr token_str;
 
-    while ((ch = code[ts + tlen])) {
-        u32 char_token = char_token_class(ch);
-        bool arrow = (ch == '-' && code[ts+tlen+1] == '>');
-        bool comment_start = (ch == '/' && code[ts+tlen+1] == '*');
+static LStr curstr(const State * s) {
+    return (LStr) { .chars = s->sptr, .len = s->eptr - s->sptr };
+}
 
-        if (!(comment_start || arrow || char_token || isspace(ch))) {
-            tlen++;
-            continue;
-        }
-        if (ch == '\n') {
-            line++;
-            line_start = ts + tlen;
-        }
-        if (tlen) {
-            /* scanned a token */
-            token_str = (LStr) { &code[ts], tlen };
-            da_append(token_list, make_token(long_token_class(token_str)));
-            ts += tlen;
-            tlen = 0;
-        }
-        if (char_token) {
-            token_str = (LStr) { &code[ts], 1 };
-            da_append(token_list, make_token(char_token));
-            ts++;
-        }
-        if (arrow) {
-            token_str = (LStr) { &code[ts], 2 };
-            da_append(token_list, make_token(TK_ARROW));
-            ts++;
-        }
-        if (!(tlen || char_token)) {
-            ts++;
-        }
 
-        if (comment_start) {
-            do {
-                if (ch == '\n') {
-                    line++;
-                    line_start = ts + tlen;
+static void move_ptr(State * s, u32 dist) {
+    s->eptr += dist;
+    for (u32 i = 0; i < dist; i++)
+        if (is_line_end(*++s->sptr))
+            s->col = 0, s->line++;
+        else
+            s->col++;
+}
+
+
+static Token make_token(State * s, u32 class) {
+    Token token = {
+        .class = class,
+        .val = curstr(s),
+        .dbug_line = s->line, .dbug_column = s->col
+    };
+    s->parsing = PARSE_BLANK;
+    move_ptr(s, token.val.len);
+    s->eptr = s->sptr;
+    return token;
+}
+
+static State state_init(char * code) { return (State) { PARSE_BLANK, code, code, 1, 1 }; }
+
+
+void print_token(Token token);
+
+static Token get_token(State * s) {
+    u32 class;
+
+    for (;;) switch (s->parsing) {
+        case PARSE_BLANK:
+            while (s->eptr == s->sptr && is_whitespace(*s->sptr))
+                move_ptr(s, 1);
+
+            u32 cmt = comment_class(s->sptr);
+
+            if (cmt == CMT_END) PANIC("tokenizer error");
+            else if (cmt == CMT_LINE)  s->parsing = PARSE_CMT_LINE;
+            else if (cmt == CMT_BEGIN) s->parsing = PARSE_CMT_MULTILINE;
+            else if (*s->sptr == '"')  s->parsing = PARSE_STRING;
+            else if (!*s->sptr)        s->parsing = PARSE_EOF;
+            else                       s->parsing = PARSE_NORMAL;
+
+            break;;
+        case PARSE_CMT_LINE:
+            for (char * ch = s->sptr;; ch++)
+                if (is_line_end(*ch)) {
+                    s->sptr = s->eptr = ch;
+                    s->col = 0, s->line++;
+                    s->parsing = PARSE_BLANK;
+                    break;;
                 }
-                ts++;
-            } while ((ch = code[ts]) && !(ch == '*' && code[ts+1] == '/'));
-            ts += 2;
-        }
-        if (!code[ts + tlen - 1]) break;
-    }
+            break;
+        case PARSE_CMT_MULTILINE:
+            move_ptr(s, 2);
+            for (;*s->sptr && comment_class(s->sptr - 2) != CMT_END; move_ptr(s, 1));
+            s->parsing = PARSE_BLANK;
+            break;
 
-    token_str = (LStr) { &code[ts - 1], 1 };
-    da_append(token_list, make_token(TK_EOF));
+        case PARSE_NORMAL: 
+            for(;;) {
+                s->eptr++;
+
+                if ((class = symbolic_token_class(curstr(s))))
+                    return make_token(s, class);
+                else if (is_splitting(s->eptr))
+                    return make_token(s, long_token_class(curstr(s)));
+            }
+        case PARSE_STRING:
+            move_ptr(s, 1);
+            while (*++s->eptr != '"')
+                if (!*s->eptr) PANIC("tokenizer error");
+            Token tk = make_token(s, TK_STRING);
+            move_ptr(s, 1);
+            return tk;
+        case PARSE_EOF:
+            return make_token(s, TK_EOF);
+    };
+}
 
 
-    u32 n = token_list.len * sizeof(Token);
-    Token * tokens = aalloc(arena, n);
-    memcpy(tokens, token_list.items, n);
-
-    free(token_list.items);
-
-    return tokens;
-    #undef make_token
+void print_token(Token token) {
+    u32 len = token.val.len;
+    char * buf = malloc(len + 1);
+    buf[len] = 0;
+    strncpy(buf, token.val.chars, token.val.len);
+    printf("%d(%s)\n", token.class, buf);
+    free(buf);
 }
 
 
 void print_tokens(const Token * tokens) {
     while (tokens->class != TK_EOF) {
-        char * buf = malloc(tokens->val.len + 1);
-        buf[tokens->val.len] = 0;
+        u32 len = tokens->val.len;
+        char * buf = malloc(len + 1);
+        buf[len] = 0;
         strncpy(buf, tokens->val.chars, tokens->val.len);
-        printf("%d(%s)\n", tokens->class, buf);
+        printf("%d(%s)%c", tokens->class, buf,
+            (tokens->val.chars[len] == '\n' || tokens[1].class == TK_EOF) ?'\n':' '
+        );
         free(buf);
         tokens++;
     }
 }
 
+
+Token * tokenize(char * code, Arena * arena) {
+    State s = state_init(code);
+
+    da(Token) token_list = {};
+
+    Token token;
+    do {
+        token = get_token(&s);
+        da_append(token_list, token);
+    } while (token.class != TK_EOF);
+
+    u32 n = token_list.len * sizeof(Token);
+    Token * tokens = aalloc(arena, n);
+    memcpy(tokens, token_list.items, n);
+
+    da_dealloc(token_list);
+
+    return tokens;
+}

@@ -62,7 +62,7 @@ typedef struct {
 
 typedef i32 Integer;
 
-typedef LStr String;
+typedef struct { char * chars, len; } String;
 
 typedef struct { u32 stack_size; Expr body; } Function;
 
@@ -118,6 +118,9 @@ typedef struct {
     fprintf(stderr, "Panic! %s:%d\n", __FILE__, __LINE__); \
     exit(-1);                                            \
 } while(0)
+
+#define unreachable \
+    PANIC("unreachable");
 
 
 
