@@ -1,0 +1,13 @@
+#!/bin/bash
+
+dir="test_scripts"
+run="./receval"
+
+scripts=($dir/*.re $@)
+
+for file in "${scripts[@]}"; do
+    echo "  $run $file:"
+    $run $file
+    exit_code=$?
+    [ $exit_code -ne 0 ] && echo "exited with code $exit_code" " "
+done
