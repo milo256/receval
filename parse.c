@@ -60,11 +60,13 @@ static Arena parser_arena;
 /* freed after execution */
 static Arena code_arena;
 
+
 static TypeClass lstr_to_type_class(LStr str) {
     if (lstr_eq(str, LSTR("int"))) return TYPE_INT;
     else if (lstr_eq(str, LSTR("str"))) return TYPE_STR;
     else return TYPE_NONE;
 }
+
 
 static int delim_value(const Token * token) {
     int c = token->class;
@@ -72,10 +74,12 @@ static int delim_value(const Token * token) {
     else return 0;
 }
 
+
 static int opposite_delim(const Token * token) {
     int c = token->class;
     return (c % 2)? c + 1 : c - 1;
 }
+
 
 static Type * get_ret_type(Type function) {
     ASSERT(function.class == TYPE_FN_PTR);
@@ -111,7 +115,9 @@ static Type make_type_fn_ptr(Type ret_type, u32 param_count) {
     };
 }
 
+
 static Type make_type_int() { return (Type) { .class = TYPE_INT }; }
+
 
 static Expr make_expr_literal(TypeClass type_class, void ** val_ptr) {
     Expr expr = {
@@ -125,6 +131,7 @@ static Expr make_expr_literal(TypeClass type_class, void ** val_ptr) {
     return expr;
 }
 
+
 static Expr make_expr_builtin(BuiltinClass class, TypeClass ret_class, OpBuiltin ** op_ptr) {
     Expr expr = { OP_BUILTIN, ret_class, aalloc(&code_arena, sof(OpBuiltin)) };
     *op_ptr = expr.expr;
@@ -132,12 +139,14 @@ static Expr make_expr_builtin(BuiltinClass class, TypeClass ret_class, OpBuiltin
     return expr;
 }
 
+
 static Expr make_expr_call(Expr fn, TypeClass ret_class, OpCall ** op_ptr) {
     Expr expr = { OP_CALL, ret_class, aalloc(&code_arena, sof(OpCall)) };
     *op_ptr = expr.expr;
     **op_ptr = (OpCall) { .fn = fn };
     return expr;
 }
+
 
 static Expr make_expr_var(TypeClass type_class, Ident ident) {
     Expr expr = { OP_VAR, type_class, aalloc(&code_arena, sof(OpVar)) };
@@ -200,11 +209,12 @@ static void error(Token const * tk, char * msg) {
     exit(1);
 }
 
+
 static void parse_expr(
-    Token const ** tokens,
-    Context * context,
+    Token const ** tokens, Context * context,
     Expr * out_expr, Type * out_ret_type
 );
+
 
 static void parse_variadic_call_params(
     Token const ** tokens, Context * context,
@@ -239,6 +249,7 @@ static void parse_variadic_call_params(
     da_dealloc(params);
     da_dealloc(param_types);
 }
+
 
 static void parse_call_params(
     Token const ** tokens, Context * context,
@@ -275,6 +286,7 @@ static void parse_call_params(
     *out_param_count = i;
 }
 
+
 static Ident add_local(Context * ctx, LStr name, Type type) {
     u32 offset = ctx->locals.len ?
         ctx->locals.items[ctx->locals.len - 1].offset
@@ -308,12 +320,14 @@ static void skip_to_end(const Token ** token) {
     }
 }
 
+
 /* TODO: implement :P */
 static Type parse_type(const Token ** token) {
     Type ret = { lstr_to_type_class((*token)->val), NULL };
     (*token)++;
     return ret;
 }
+
 
 static void create_param_defs(const Def * function_def, Def * buf) {
     ASSERT(function_def->type.class == TYPE_FN_PTR);
@@ -332,6 +346,7 @@ static void create_param_defs(const Def * function_def, Def * buf) {
     } 
 }
 
+
 #define defs_size(list) \
         ((list).len ? (list).items[(list).len - 1].offset + sof_type[(list).items[(list).len - 1].type.class] : 0)
 
@@ -341,6 +356,7 @@ static bool name_in(LStr name, const Def * defs, u32 defs_len, u32 * out_index) 
         if (lstr_eq(defs[*out_index].name, name)) return true;
     return false;
 }
+
 
 static bool parse_var(
     LStr var_name,
@@ -357,6 +373,7 @@ static bool parse_var(
     } else return false;
     return true;
 }
+
 
 static BuiltinClass lstr_to_builtin(const LStr str) {
     static char * builtin_names[] = {
@@ -376,12 +393,14 @@ static BuiltinClass lstr_to_builtin(const LStr str) {
     return B_NONE;
 }
 
+
 static Integer lstr_to_int(LStr str) {
     char * end_ptr;
     Integer ret = strtol(str.chars, &end_ptr, 10); 
     ASSERT(end_ptr == str.chars + str.len);
     return ret;
 }
+
 
 static void parse_expr(
     Token const ** tokens, Context * context,
@@ -551,6 +570,7 @@ static u32 parser_count_params(const Token * open) {
     return ct;
 }
 
+
 static void parse_global_def(const Token ** tokens, DefList * globals) {
     const Token * token = *tokens;
     if (token->class != TK_ASSIGN) error(token, "expected global variable definition");
@@ -600,6 +620,7 @@ static void parse_global_def(const Token ** tokens, DefList * globals) {
     *tokens = token;
 }
 
+
 static void parse_tokens(const Token ** tokens, void ** out_globals, Function ** out_main) {
     DefList global_defs = {};
     *out_main = NULL;
@@ -632,9 +653,11 @@ static void parse_tokens(const Token ** tokens, void ** out_globals, Function **
     da_dealloc(global_defs);
 }
 
+
 void free_code(void) {
     afree(code_arena);
 }
+
 
 void parse_code(char * code, void ** out_globals, Function ** out_main) {
     parser_arena = arena_init();
