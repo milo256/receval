@@ -6,8 +6,8 @@ RELEASE := 0
 LDFLAGS := -fsanitize=address 
 APP_NAME := receval
 
-SRCS := receval.c parse.c tokenizer.c arena.c
-HEADERS := tokenizer.h common.h da.h parse.h arena.h
+SRCS := receval.c parser.c tokenizer.c utils.c
+HEADERS := common.h ident.h arena.h da.h tokenizer.h parser.h
 OBJDIR := obj
 OBJS = $(patsubst %.c, $(OBJDIR)/%.o, $(SRCS))
 

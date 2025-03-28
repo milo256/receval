@@ -1,7 +1,10 @@
 #include "tokenizer.h"
-#include <ctype.h>
+
 #include "da.h"
+
+#include <ctype.h>
 #include <string.h>
+
 
 static u32 long_token_class(LStr str) {
     if (isdigit(str.chars[0]))
@@ -10,6 +13,7 @@ static u32 long_token_class(LStr str) {
         return TK_FUNCTION;
     return TK_IDENT;
 }
+
 
 static u32 symbolic_token_class(LStr str) {
     if (str.len == 1) switch(str.chars[0]) {
@@ -27,16 +31,6 @@ static u32 symbolic_token_class(LStr str) {
     return SATISFY_COMPILER;
 }
 
-static void print_tokens(Token const * tokens) {
-    while (tokens->class != TK_EOF) {
-        char * buf = malloc(tokens->val.len + 1);
-        buf[tokens->val.len] = 0;
-        strncpy(buf, tokens->val.chars, tokens->val.len);
-        printf("%d(%s)\n", tokens->class, buf);
-        free(buf);
-        tokens++;
-    }
-}
 
 Token * tokenize(char * code, Arena * arena) {
     #define make_token(class) (Token) { class, token_str, line, ts - line_start }
@@ -109,5 +103,17 @@ Token * tokenize(char * code, Arena * arena) {
 
     return tokens;
     #undef make_token
+}
+
+
+void print_tokens(const Token * tokens) {
+    while (tokens->class != TK_EOF) {
+        char * buf = malloc(tokens->val.len + 1);
+        buf[tokens->val.len] = 0;
+        strncpy(buf, tokens->val.chars, tokens->val.len);
+        printf("%d(%s)\n", tokens->class, buf);
+        free(buf);
+        tokens++;
+    }
 }
 

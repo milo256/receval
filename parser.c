@@ -1,37 +1,38 @@
+#include "parser.h"
+
+#include "common.h"
+#include "ident.h"
+#include "arena.h"
+#include "da.h"
+#include "tokenizer.h"
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
 
-#include "da.h"
-#include "arena.h"
-#include "common.h"
-#include "tokenizer.h"
-#include "parse.h"
+
+/* Note: receval does not have classes. the word "class" anywhere in this
+ * codebase just means "kind" or "category", and does not have anything to do
+ * with the common programming language feature called a class.
+ */
 
 #define MAX_COLS 40
-
 #define sof sizeof
 
-Ident ident_new(u32 loc, u32 ofs) { return (loc << 30) | ofs; }
-u32 var_location(Ident ident) { return ((3 << 30) & ident) >> 30; }
-u32 var_offset(Ident ident) { return (((1 << 30) - 1) & ident); }
-
-/* Note: receval does not have classes. the word "class" anywhere in this codebase just means "kind" or "category",
- * and does not have anything to do with the programming language construct. TypeClass refers to the overall type.
- * e.g. Function pointers are TypeClass `TYPE_FN_PTR` but Type `{ TYPE_FN_PTR, <return_type> }`
- */
 
 typedef struct Type {
     TypeClass class;
     void * data;
 } Type;
 
+
 typedef struct {
     Type ret_type;
     u32 param_count;    
     /* and then args array is stored immediately after this in memory (trust) */
 }  FunctionTypeData;
+
 
 /* we don't need ident because ident is just offset + location,
  * and location is which array the def is stored in */
@@ -40,8 +41,9 @@ typedef struct {
     Type type;
     u32 offset;
     Token * init; /* location of the initialiser in code. only used for static
-                   * variables since they're initialised prior to code execution. */
+                   * variables since they're initialised prior to execution. */
 } Def;
+
 
 typedef struct {
     struct {
@@ -50,6 +52,7 @@ typedef struct {
     } globals;
     da(Def) locals;
 } Context;
+
 
 typedef da(Def) DefList;
 
@@ -61,12 +64,40 @@ static Arena parser_arena;
 static Arena code_arena;
 
 
-static TypeClass lstr_to_type_class(LStr str) {
-    if (lstr_eq(str, LSTR("int"))) return TYPE_INT;
-    else if (lstr_eq(str, LSTR("str"))) return TYPE_STR;
-    else return TYPE_NONE;
+static void error(Token const * tk, char * msg) {
+    fprintf(stderr, "Receval: Error on %d:%d: %s\n", tk->dbug_line, tk->dbug_column, msg);
+    char * at = tk->val.chars;
+    char * line_start = at - tk->dbug_column + 1;
+    char * line_end = strchr(at, '\n');
+
+    char * str_start = MAX(line_start, line_end - MAX_COLS);
+    if ((at - 4) < str_start)
+        str_start = MAX(at - 4, line_start);
+    char * str_end = MIN(line_start + MAX_COLS, line_end);
+
+    char buf[MAX_COLS + 1];
+    u32 len = str_end - str_start;
+    u32 error_pos = at - str_start;
+    u32 error_len = MAX(1, MIN(tk->val.len, str_end - at));
+    strncpy(buf, str_start, len);
+
+    buf[len] = '\0';
+
+    u32 margin_width = fprintf(stderr, " %d |", tk->dbug_line);
+    fprintf(stderr, "%s\n", buf);
+    for (u32 i = 0; i < error_pos + margin_width; i++)
+        putchar(' ');
+    for (u32 i = 0; i < error_len; i++)
+        putchar('^');
+    putchar('\n');
+    exit(1);
 }
 
+
+
+/* Token Functions
+ * -----------------------------------------------------------------------------
+ */
 
 static int delim_value(const Token * token) {
     int c = token->class;
@@ -80,6 +111,34 @@ static int opposite_delim(const Token * token) {
     return (c % 2)? c + 1 : c - 1;
 }
 
+
+/* TODO: doesn't work for assignments not within a function call */
+static void skip_to_end(const Token ** token) {
+    const Token * starting_token = *token;
+    if (delim_value(*token) < 1) {
+        (*token)++;
+        if (delim_value(*token) < 1) return;
+    }
+    (*token)++;
+    for (u32 d = 1; d;) {
+        if ((*token)->class == TK_EOF) error(starting_token, "missing closing delimiter");
+        d += delim_value(*token);
+        (*token)++;
+    }
+}
+
+
+static TypeClass lstr_to_type_class(LStr str) {
+    if (lstr_eq(str, LSTR("int"))) return TYPE_INT;
+    else if (lstr_eq(str, LSTR("str"))) return TYPE_STR;
+    else return TYPE_NONE;
+}
+
+
+
+/* Type Functions
+ * -----------------------------------------------------------------------------
+ */
 
 static Type * get_ret_type(Type function) {
     ASSERT(function.class == TYPE_FN_PTR);
@@ -119,6 +178,35 @@ static Type make_type_fn_ptr(Type ret_type, u32 param_count) {
 static Type make_type_int() { return (Type) { .class = TYPE_INT }; }
 
 
+static bool type_eq(const Type * a, const Type * b) {
+    if (a->class != b->class) return false;
+    if (a == b) return true;
+    switch (a->class) {
+        case TYPE_INT: case TYPE_STR:
+            return true;
+        case TYPE_FN_PTR: {
+            u32 alen = get_param_count(*a);
+            u32 blen = get_param_count(*b);
+            if (alen != blen) return false;
+            Type * atypes = get_param_types(*a);
+            Type * btypes = get_param_types(*b);
+            for (u32 i = 0; i < alen; i++) {
+                if (!type_eq(&atypes[i], &btypes[i]))
+                    return false;
+            }
+            return true;
+        }
+        default: PANIC();
+    }
+    return SATISFY_COMPILER;
+}
+
+
+
+/* Expression Functions
+ * -----------------------------------------------------------------------------
+ */
+
 static Expr make_expr_literal(TypeClass type_class, void ** val_ptr) {
     Expr expr = {
         .class = LITERAL,
@@ -156,57 +244,93 @@ static Expr make_expr_var(TypeClass type_class, Ident ident) {
 }
 
 
-static bool type_eq(const Type * a, const Type * b) {
-    if (a->class != b->class) return false;
-    if (a == b) return true;
-    switch (a->class) {
-        case TYPE_INT: case TYPE_STR:
-            return true;
-        case TYPE_FN_PTR: {
-            u32 alen = get_param_count(*a);
-            u32 blen = get_param_count(*b);
-            if (alen != blen) return false;
-            Type * atypes = get_param_types(*a);
-            Type * btypes = get_param_types(*b);
-            for (u32 i = 0; i < alen; i++) {
-                if (!type_eq(&atypes[i], &btypes[i]))
-                    return false;
-            }
-            return true;
-        }
-        default: PANIC();
-    }
-    return SATISFY_COMPILER;
+
+/* Definition Functions
+ * -----------------------------------------------------------------------------
+ */
+
+static Ident add_local(Context * ctx, LStr name, Type type) {
+    u32 offset = ctx->locals.len ?
+        ctx->locals.items[ctx->locals.len - 1].offset
+        + sof_type[ctx->locals.items[ctx->locals.len - 1].type.class] : 0;
+
+    Ident ident = ident_new(LOCAL, offset);
+
+    Def def = {
+        .name = name,
+        .offset = var_offset(ident),
+        .type = type
+    };
+
+    da_append(ctx->locals, def);
+    return ident;
 }
 
 
-static void error(Token const * tk, char * msg) {
-    fprintf(stderr, "Receval: Error on %d:%d: %s\n", tk->dbug_line, tk->dbug_column, msg);
-    char * at = tk->val.chars;
-    char * line_start = at - tk->dbug_column + 1;
-    char * line_end = strchr(at, '\n');
+static void create_param_defs(const Def * function_def, Def * buf) {
+    ASSERT(function_def->type.class == TYPE_FN_PTR);
+    u32 offset = 0,
+        param_count = get_param_count(function_def->type);
 
-    char * str_start = MAX(line_start, line_end - MAX_COLS);
-    if ((at - 4) < str_start)
-        str_start = MAX(at - 4, line_start);
-    char * str_end = MIN(line_start + MAX_COLS, line_end);
+    Type * types = get_param_types(function_def->type);
+    LStr * names = function_def->param_names;
+    
+    for (u32 i = 0; i < param_count; i++) {
+        buf[i] = (Def) {
+            .name = names[i], .type = types[i],
+            .offset = offset, .init = NULL,
+        };
+        offset += sof_type[types[i].class];
+    } 
+}
 
-    char buf[MAX_COLS + 1];
-    u32 len = str_end - str_start;
-    u32 error_pos = at - str_start;
-    u32 error_len = MAX(1, MIN(tk->val.len, str_end - at));
-    strncpy(buf, str_start, len);
 
-    buf[len] = '\0';
+#define defs_size(list) \
+        ((list).len ? (list).items[(list).len - 1].offset + sof_type[(list).items[(list).len - 1].type.class] : 0)
 
-    u32 margin_width = fprintf(stderr, " %d |", tk->dbug_line);
-    fprintf(stderr, "%s\n", buf);
-    for (u32 i = 0; i < error_pos + margin_width; i++)
-        putchar(' ');
-    for (u32 i = 0; i < error_len; i++)
-        putchar('^');
-    putchar('\n');
-    exit(1);
+
+
+/* String Parsing Functions
+ * -----------------------------------------------------------------------------
+ */
+
+static BuiltinClass lstr_to_builtin(const LStr str) {
+    static char * builtin_names[] = {
+        [B_ADD_I] = "+",
+        [B_SUB_I] = "-",
+        [B_MUL_I] = "*",
+        [B_DIV_I] = "/",
+        [B_IF] = "if",
+        [B_WHILE] = "while",
+        [B_SEQ] = "seq",
+        [B_PRINT_I] = "print"
+    };
+
+    for (BuiltinClass i = 0; i < ARRLEN(builtin_names); i++)
+        if (lstr_eq(str, LSTR(builtin_names[i]))) return i;
+
+    return B_NONE;
+}
+
+
+static Integer lstr_to_int(LStr str) {
+    char * end_ptr;
+    Integer ret = strtol(str.chars, &end_ptr, 10); 
+    ASSERT(end_ptr == str.chars + str.len);
+    return ret;
+}
+
+
+
+/* Token Parsing Functions
+ * -----------------------------------------------------------------------------
+ */
+
+/* TODO: implement :P */
+static Type parse_type(const Token ** token) {
+    Type ret = { lstr_to_type_class((*token)->val), NULL };
+    (*token)++;
+    return ret;
 }
 
 
@@ -214,41 +338,6 @@ static void parse_expr(
     Token const ** tokens, Context * context,
     Expr * out_expr, Type * out_ret_type
 );
-
-
-static void parse_variadic_call_params(
-    Token const ** tokens, Context * context,
-    Expr ** out_params, Type ** out_param_types, u32 * out_param_count
-) {
-    da(Expr) params = {};
-    da(Type) param_types = {};
-
-    ASSERT(delim_value(*tokens) > 0);
-    TkClass close = opposite_delim(*tokens);
-    (*tokens)++;
-
-    u32 i = 0;
-    for(; (*tokens)->class != close&& (*tokens)->class != TK_EOF; i++) {
-        Expr param;
-        Type param_type;
-        parse_expr(
-            tokens, context,
-            &param, &param_type
-        );
-        da_append(params, param);
-        da_append(param_types, param_type);
-    }
-
-    *out_params = aalloc(&code_arena, i * sizeof(Expr));
-    *out_param_types = aalloc(&parser_arena, i * sizeof(Type));
-    *out_param_count = i;
-
-    memcpy(*out_params, params.items, i * sizeof(Expr));
-    memcpy(*out_param_types, param_types.items, i * sizeof(Type));
-
-    da_dealloc(params);
-    da_dealloc(param_types);
-}
 
 
 static void parse_call_params(
@@ -287,71 +376,42 @@ static void parse_call_params(
 }
 
 
-static Ident add_local(Context * ctx, LStr name, Type type) {
-    u32 offset = ctx->locals.len ?
-        ctx->locals.items[ctx->locals.len - 1].offset
-        + sof_type[ctx->locals.items[ctx->locals.len - 1].type.class] : 0;
+static void parse_variadic_call_params(
+    Token const ** tokens, Context * context,
+    Expr ** out_params, Type ** out_param_types, u32 * out_param_count
+) {
+    da(Expr) params = {};
+    da(Type) param_types = {};
 
-    Ident ident = ident_new(LOCAL, offset);
+    ASSERT(delim_value(*tokens) > 0);
+    TkClass close = opposite_delim(*tokens);
+    (*tokens)++;
 
-    Def def = {
-        .name = name,
-        .offset = var_offset(ident),
-        .type = type
-    };
-
-    da_append(ctx->locals, def);
-    return ident;
-}
-
-
-/* TODO: doesn't work for assignments not within a function call */
-static void skip_to_end(const Token ** token) {
-    const Token * starting_token = *token;
-    if (delim_value(*token) < 1) {
-        (*token)++;
-        if (delim_value(*token) < 1) return;
+    u32 i = 0;
+    for(; (*tokens)->class != close&& (*tokens)->class != TK_EOF; i++) {
+        Expr param;
+        Type param_type;
+        parse_expr(
+            tokens, context,
+            &param, &param_type
+        );
+        da_append(params, param);
+        da_append(param_types, param_type);
     }
-    (*token)++;
-    for (u32 d = 1; d;) {
-        if ((*token)->class == TK_EOF) error(starting_token, "missing closing delimiter");
-        d += delim_value(*token);
-        (*token)++;
-    }
+
+    *out_params = aalloc(&code_arena, i * sizeof(Expr));
+    *out_param_types = aalloc(&parser_arena, i * sizeof(Type));
+    *out_param_count = i;
+
+    memcpy(*out_params, params.items, i * sizeof(Expr));
+    memcpy(*out_param_types, param_types.items, i * sizeof(Type));
+
+    da_dealloc(params);
+    da_dealloc(param_types);
 }
 
 
-/* TODO: implement :P */
-static Type parse_type(const Token ** token) {
-    Type ret = { lstr_to_type_class((*token)->val), NULL };
-    (*token)++;
-    return ret;
-}
-
-
-static void create_param_defs(const Def * function_def, Def * buf) {
-    ASSERT(function_def->type.class == TYPE_FN_PTR);
-    u32 offset = 0,
-        param_count = get_param_count(function_def->type);
-
-    Type * types = get_param_types(function_def->type);
-    LStr * names = function_def->param_names;
-    
-    for (u32 i = 0; i < param_count; i++) {
-        buf[i] = (Def) {
-            .name = names[i], .type = types[i],
-            .offset = offset, .init = NULL,
-        };
-        offset += sof_type[types[i].class];
-    } 
-}
-
-
-#define defs_size(list) \
-        ((list).len ? (list).items[(list).len - 1].offset + sof_type[(list).items[(list).len - 1].type.class] : 0)
-
-
-static bool name_in(LStr name, const Def * defs, u32 defs_len, u32 * out_index) {
+static bool find_name(LStr name, const Def * defs, u32 defs_len, u32 * out_index) {
     for (*out_index = 0; *out_index < defs_len; (*out_index)++)
         if (lstr_eq(defs[*out_index].name, name)) return true;
     return false;
@@ -364,41 +424,14 @@ static bool parse_var(
     Type * out_type, Ident * out_ident
 ) {
     u32 var_index;
-    if (name_in(var_name, context.locals.items, context.locals.len, &var_index)) {
+    if (find_name(var_name, context.locals.items, context.locals.len, &var_index)) {
         *out_type = context.locals.items[var_index].type;
         *out_ident = ident_new(LOCAL, context.locals.items[var_index].offset);
-    } else if (name_in(var_name, context.globals.items, context.globals.len, &var_index)) {
+    } else if (find_name(var_name, context.globals.items, context.globals.len, &var_index)) {
         *out_type = context.globals.items[var_index].type;
         *out_ident = ident_new(GLOBAL, context.globals.items[var_index].offset);
     } else return false;
     return true;
-}
-
-
-static BuiltinClass lstr_to_builtin(const LStr str) {
-    static char * builtin_names[] = {
-        [B_ADD_I] = "+",
-        [B_SUB_I] = "-",
-        [B_MUL_I] = "*",
-        [B_DIV_I] = "/",
-        [B_IF] = "if",
-        [B_WHILE] = "while",
-        [B_SEQ] = "seq",
-        [B_PRINT_I] = "print"
-    };
-
-    for (BuiltinClass i = 0; i < ARRLEN(builtin_names); i++)
-        if (lstr_eq(str, LSTR(builtin_names[i]))) return i;
-
-    return B_NONE;
-}
-
-
-static Integer lstr_to_int(LStr str) {
-    char * end_ptr;
-    Integer ret = strtol(str.chars, &end_ptr, 10); 
-    ASSERT(end_ptr == str.chars + str.len);
-    return ret;
 }
 
 
@@ -654,9 +687,12 @@ static void parse_tokens(const Token ** tokens, void ** out_globals, Function **
 }
 
 
-void free_code(void) {
-    afree(code_arena);
-}
+
+/* API Functions
+ * -----------------------------------------------------------------------------
+ */
+
+void free_code(void) { afree(code_arena); }
 
 
 void parse_code(char * code, void ** out_globals, Function ** out_main) {

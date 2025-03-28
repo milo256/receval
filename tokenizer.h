@@ -1,9 +1,8 @@
 #pragma once
-
 #include "common.h"
 #include "arena.h"
 
-/* -- TOKENS -- */
+
 typedef enum {
     TK_NONE,
     /* opening delimiters are odd, closing even.
@@ -24,12 +23,18 @@ typedef enum {
     TK_EOF
 } TkClass;
 
+
 typedef struct {
     TkClass class;
     LStr val;
     u32 dbug_line;
     u32 dbug_column;
 } Token;
+
+
+#define tk(class) (Token) { .class = class, .str = NULL, .strlen = 0 }
+
+void print_tokens(const Token * tokens);
 
 Token * tokenize(char *, Arena *);
 

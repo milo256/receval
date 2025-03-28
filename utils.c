@@ -1,4 +1,23 @@
 #include "arena.h"
+#include "ident.h"
+
+#include "common.h"
+
+
+
+/* String Functions
+ *------------------------------------------------------------------------------
+ */
+
+int lstr_eq(const LStr a, const LStr b) {
+    return a.len == b.len && !strncmp(a.chars, b.chars, MIN(a.len, b.len));
+}
+
+
+
+/* Arena Functions
+ *------------------------------------------------------------------------------
+ */
 
 #ifndef __NDEBUG__
 #ifdef __SANITIZE_ADDRESS__
@@ -43,3 +62,13 @@ static void arena_mem_free(void * arena_mem) {
 }
 
 void afree(Arena arena) { if (arena.mem) arena_mem_free(arena.mem); }
+
+
+
+/*------------------------------------------------------------------------------
+ * Ident Functions
+ */
+
+Ident ident_new(u32 loc, u32 ofs) { return (loc << 30) | ofs; }
+u32 var_location(Ident ident) { return ((3 << 30) & ident) >> 30; }
+u32 var_offset(Ident ident) { return (((1 << 30) - 1) & ident); }

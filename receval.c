@@ -1,24 +1,22 @@
-#include<stdio.h>
-#include<stdbool.h>
-#include<string.h>
-
 #include "common.h"
-#include "parse.h"
+#include "parser.h"
+#include "ident.h"
+
 
 /* my z key is broken. sof = sizeof and b at the end of a
  * variable name means it's a size in (b)ytes */
 #define sof sizeof
 
-/* ever wondered what happens to your function returns when
- * you cast them to (void)? */
+
+/* ever wondered what happens to your function returns
+ * when you cast them to (void)? */
 const char DISCARD[TYPE_MAX_SIZE];
 
-int lstr_eq(const LStr a, const LStr b) {
-    return a.len == b.len && !strncmp(a.chars, b.chars, MIN(a.len, b.len));
-}
 
 void eval_function(Function *, void *, void *, void *);
+
 void eval_expr(Expr *, void *, void *, void *);
+
 
 void eval_builtin(
     OpBuiltin * builtin, void * globals, void * locals, void * ret_ptr
@@ -80,7 +78,7 @@ void eval_builtin(
 
 }
 
-/* args is args of containing function. effectively more locals */
+
 void eval_expr(
     Expr * expr, void * globals, void * locals, void * ret_ptr
 ) {
@@ -138,6 +136,7 @@ void eval_expr(
     }
 }
 
+
 int eval_main(Function * fn, void * globals) {
     void * ret_ptr = malloc(sof_type[TYPE_INT]);
 
@@ -151,7 +150,6 @@ int eval_main(Function * fn, void * globals) {
     return ret;
 }
 
-#define tk(class) (Token) { .class = class, .str = NULL, .strlen = 0 }
 
 int main(int argc, char * argv[]) {
     char * filename = argc > 1 ? argv[1] : "demo.re";
