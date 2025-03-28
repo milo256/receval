@@ -15,27 +15,22 @@ static u32 long_token_class(LStr str) {
 }
 
 
-static u32 symbolic_token_class(LStr str) {
-    if (str.len == 1) switch(str.chars[0]) {
+static u32 char_token_class(char ch) {
+    switch(ch) {
         case '=': return TK_ASSIGN;
         case '(': return TK_OPEN;
         case ')': return TK_CLOSE;
         case '{': return TK_CB_OPEN;
         case '}': return TK_CB_CLOSE;
-        default: PANIC();
-    } else if (str.len == 2) {
-        if (str.chars[0] == '-' && str.chars[1] == '>')
-            return TK_ARROW;
+        case '[': return TK_SB_OPEN;
+        case ']': return TK_SB_CLOSE;
+        default: return TK_NONE;
     }
-    PANIC();
-    return SATISFY_COMPILER;
 }
 
 
 Token * tokenize(char * code, Arena * arena) {
     #define make_token(class) (Token) { class, token_str, line, ts - line_start }
-
-    char char_tokens[] = "=(){}[]";
 
     da(Token) token_list = {};
 
@@ -45,7 +40,7 @@ Token * tokenize(char * code, Arena * arena) {
     LStr token_str;
 
     while ((ch = code[ts + tlen])) {
-        bool char_token = strchr(char_tokens, ch);
+        u32 char_token = char_token_class(ch);
         bool arrow = (ch == '-' && code[ts+tlen+1] == '>');
         bool comment_start = (ch == '/' && code[ts+tlen+1] == '*');
 
@@ -66,7 +61,7 @@ Token * tokenize(char * code, Arena * arena) {
         }
         if (char_token) {
             token_str = (LStr) { &code[ts], 1 };
-            da_append(token_list, make_token(symbolic_token_class(token_str)));
+            da_append(token_list, make_token(char_token));
             ts++;
         }
         if (arrow) {

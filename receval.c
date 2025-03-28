@@ -152,10 +152,12 @@ int eval_main(Function * fn, void * globals) {
 
 
 int main(int argc, char * argv[]) {
-    char * filename = argc > 1 ? argv[1] : "demo.re";
-    FILE * f = fopen(filename, "r");
+    if (argc < 2) return fprintf(stderr, "provide file\n"), -1;
+    if (argc > 2) return fprintf(stderr, "too many arguments\n"), -1;
 
-    if (!f) PANIC();
+    FILE * f = fopen(argv[1], "r");
+
+    if (!f) return fprintf(stderr, "file doesn't exist\n"), -1;
 
     fseek(f, 0, SEEK_END);
     u32 code_len = ftell(f);
