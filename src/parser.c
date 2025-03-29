@@ -224,7 +224,7 @@ static u32 get_param_count(Type function) {
 }
 
 
-static Type make_type_fn_ptr(Type ret_type, u32 param_count) {
+static Type make_type_function(Type ret_type, u32 param_count) {
     FunctionTypeData data = {
         .ret_type = ret_type,
         .param_count = param_count,
@@ -286,6 +286,10 @@ static bool type_eq(const Type * a, const Type * b) {
         .expr = (inner_var_ptr) \
     }) \
 
+
+static Expr make_expr_function_literal(Function fn) {
+    Function * _; return MAKE_EXPR(FN_LITERAL, _, Function, fn);
+}
 
 static Expr make_expr_int_literal(Integer val) {
     Integer * _; return MAKE_EXPR(INT_LITERAL, _, Integer, val);
@@ -503,17 +507,30 @@ static Integer lstr_to_int(LStr str) {
  * -----------------------------------------------------------------------------
  */
 
-#define skip(token_ptr, token_class) ASSERT_EQ((token_ptr)++->class, (token_class))
+#define skip(token_ptr, token_class) do { \
+    ASSERT_EQ((token_ptr)->class, (token_class)); \
+    (token_ptr)++; \
+} while (0);
 
 #define skip_expect(token_ptr, token_class, ...) \
     if ((token_ptr)++->class != (token_class)) error((token_ptr), __VA_ARGS__)
 
 
-/* TODO: implement :P */
-static Type parse_type(const Token ** token) {
-    Type ret = { lstr_to_type_class((*token)->val), NULL };
-    (*token)++;
-    return ret;
+/* parses a type and moves to first token after the type. if there is no type,
+ * returns TYPE_NONE and does not move.
+ */
+static Type parse_type(const Token ** tokens) {
+    TypeClass class;
+    if ((*tokens)->class == TK_IDENT)
+        class = lstr_to_type_class((*tokens)->val);
+    else class = TYPE_NONE;
+
+    Type type = make_ptype(class);
+    ASSERT(is_type_primitive(class));
+
+    if (class == TYPE_NONE) return type;
+    (*tokens)++;
+    return type;
 }
 
 
@@ -829,6 +846,66 @@ static void parse_expr_assign(
     *out_ret_type = var_type;
 }
 
+/* so we know how much space to allocate for the params, we parse them twice.
+ * this function will error on invalid param list, so no need to check that
+ * again */
+static u32 parser_count_params(const Token * open) {
+    const Token * token = open;
+    skip_expect(token, TK_OPEN, "expected parameter list `(...)`");
+    u32 ct = 0;
+    while (token->class != TK_EOF && token->class != TK_CLOSE) {
+        if (parse_type(&token).class == TYPE_NONE) error(token, "expected type");
+        if (token->class != TK_IDENT) error(token, "expected identifier");
+        token++;
+        ct++;
+    }
+    if (token->class != TK_CLOSE) error(open, "unclosed delimiter");
+    return ct;
+}
+
+
+static void parse_expr_function_lit(
+    const Token ** tokens, Context * context,
+    Expr * out_expr, Type * out_ret_type
+) {
+
+    Type expected_fn_ret_type = make_ptype(TYPE_NONE);
+
+    skip(*tokens, TK_FUNCTION);
+    skip_expect(*tokens, TK_ARROW, "expected `-> <return-type>`");
+    const Token * ret_type_token = *tokens;
+    expected_fn_ret_type = parse_type(tokens);
+    if (expected_fn_ret_type.class == TYPE_NONE) error(*tokens, "expected type");
+
+    u32 param_count = parser_count_params(*tokens);
+
+    Context ctx = { context->globals, da_new(Def, param_count) };
+
+    skip(*tokens, TK_OPEN);
+    for (u32 i = 0; i < param_count; i++) {
+        Type type = parse_type(tokens);
+        skip(*tokens, TK_IDENT);
+        add_local(&ctx, (*tokens)->val, type);
+        skip(*tokens, TK_IDENT);
+    }
+    skip(*tokens, TK_CLOSE);
+
+    Function fn;
+
+    Type fn_ret_type;
+    parse_expr(tokens, &ctx, &fn.body, &fn_ret_type);
+    
+    if (!type_eq(&fn_ret_type, &expected_fn_ret_type))
+        error(ret_type_token, "mismatched return type");
+
+    fn.stack_size = defs_size(ctx.locals);
+
+    da_dealloc(ctx.locals);
+
+    *out_expr = make_expr_function_literal(fn);
+    *out_ret_type = make_type_function(fn_ret_type, param_count);
+}
+
 
 static void parse_expr(
     const Token ** tokens, Context * context,
@@ -845,16 +922,18 @@ static void parse_expr(
             *out_expr = make_expr_str_literal((*tokens)->val);
             (*tokens)++;
             break;
+        case TK_FUNCTION:
+            parse_expr_function_lit(tokens, context, out_expr, out_ret_type);
+            break;
         case TK_CB_OPEN:
             parse_expr_seq(tokens, context, out_expr, out_ret_type);
             break;
         case TK_IDENT:
             parse_ident(tokens, context, out_expr, out_ret_type);
             break;
-        case TK_ASSIGN: {
+        case TK_ASSIGN:
             parse_expr_assign(tokens, context, out_expr, out_ret_type);
             break;
-        }
         default: error(*tokens, "expected expression");
     }
 }
@@ -894,20 +973,6 @@ static Function parse_function_code(
 }
 
 
-static u32 parser_count_params(const Token * open) {
-    const Token * token = open;
-    if (token->class != TK_OPEN) error(token, "expected function arguments list `(...)`");
-    token++; 
-    u32 ct = 0;
-    while (token->class != TK_EOF && token->class != TK_CLOSE) {
-        if (parse_type(&token).class == TYPE_NONE) error(token, "expected type");
-        if (token->class != TK_IDENT) error(token, "expected identifier");
-        token++;
-        ct++;
-    }
-    if (token->class != TK_CLOSE) error(open, "unclosed delimiter");
-    return ct;
-}
 
 
 static void parse_global_def(const Token ** tokens, DefList * globals) {
@@ -926,17 +991,17 @@ static void parse_global_def(const Token ** tokens, DefList * globals) {
     if (token->class == TK_FUNCTION) {
         skip(token, TK_FUNCTION);
         skip_expect(token, TK_ARROW, "expected return type `-> <type>`");
-        
+
         const Token * ret_type_token = token;
         Type ret_type = parse_type(&token);
-        if (ret_type.class == TYPE_NONE) error(ret_type_token, "expected type");
+        if (ret_type.class == TYPE_NONE) error(ret_type_token, "expected type1");
 
         u32 param_count = parser_count_params(token);
         skip(token, TK_OPEN);
         
         param_names = aalloc(code_arena, sizeof(LStr) * param_count);
 
-        type = make_type_fn_ptr(ret_type, param_count); 
+        type = make_type_function(ret_type, param_count); 
         for (u32 i = 0; i < param_count; i++) {
             get_param_types(type)[i] = parse_type(&token);
             param_names[i] = token++->val;

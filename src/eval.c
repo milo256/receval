@@ -194,7 +194,7 @@ static void eval_expr(
             *(String *) ret_ptr = *(String *) expr.expr;
             break;
         case FN_LITERAL:
-            *(Function *) ret_ptr = *(Function *) expr.expr;
+            *(Function **) ret_ptr = (Function *) expr.expr;
             break;
         default:
             printf("%d\n", expr.class);
