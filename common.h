@@ -49,7 +49,6 @@ typedef enum {
     B_DIV_I,
     B_ADD_VI,
     B_MUL_VI,
-    B_SEQ,
     B_PRINT_I,
     B_PRINT_S
 } BuiltinClass;
