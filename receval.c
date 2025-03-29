@@ -116,6 +116,17 @@ void eval_while(OpWhile * op, void * globals, void * locals) {
 }
 
 
+void eval_seq(OpSeq * op, void * globals, void * locals, void * ret_ptr) {
+    if (!op->count) return;
+    
+    for (u32 i = 0; i < op->count - 1; i++) {
+        eval_expr(op->exprs + i, globals, locals, DISCARD);
+    }
+
+    eval_expr(op->exprs + op->count - 1, globals, locals, ret_ptr);
+}
+
+
 void eval_expr(
     Expr * expr, void * globals, void * locals, void * ret_ptr
 ) {
@@ -160,14 +171,17 @@ void eval_expr(
         case OP_BUILTIN:
             eval_builtin(expr->expr, globals, locals, ret_ptr);
             break; 
-        case OP_WHILE:
-            eval_while(expr->expr, globals, locals);
-            break;
         case OP_IF:
             eval_if(expr->expr, globals, locals);
             break;
         case OP_IF_ELSE:
             eval_if_else(expr->expr, globals, locals, ret_ptr);
+            break;
+        case OP_WHILE:
+            eval_while(expr->expr, globals, locals);
+            break;
+        case OP_SEQ:
+            eval_seq(expr->expr, globals, locals, ret_ptr);
             break;
         case INT_LITERAL:
             *(Integer *) ret_ptr = *(Integer *) expr->expr;

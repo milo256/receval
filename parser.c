@@ -27,11 +27,17 @@
  */
 
 #define DEF_TYPE_CLASSES(f) \
+    \
+    /* Primitive Types */ \
+    \
     f(TYPE_NONE,     NULL,    0) \
     f(TYPE_VOID,     "void",  0) \
-    f(TYPE_FUNCTION, NULL,    sizeof(int *)) \
     f(TYPE_INT,      "int",   sizeof(Integer)) \
-    f(TYPE_STR,      "str",   sizeof(String))
+    f(TYPE_STR,      "str",   sizeof(String)) \
+    \
+    /* Complex Types */ \
+    \
+    f(TYPE_FUNCTION, NULL,    sizeof(int *))
 
 #define TC_MAKE_ENUM(enum_name, str_name, size) enum_name,
 #define TC_MAKE_SIZE_TABLE(enum_name, str_name, size) [enum_name] = size,
@@ -191,6 +197,7 @@ static TypeClass lstr_to_type_class(LStr str) {
  */
 
 static u32 sizeof_type(int type_class) {
+    ASSERT(type_class != TYPE_NONE);
     u32 size = type_sizes[type_class];
     ASSERT(size <= TYPE_MAX_SIZE);
     return size;
@@ -230,6 +237,9 @@ static Type make_type_fn_ptr(Type ret_type, u32 param_count) {
     };
 }
 
+static bool is_type_primitive(TypeClass class) {
+    return (class != TYPE_NONE && class < TYPE_FUNCTION);
+}
 
 static Type make_type_int() { return (Type) { .class = TYPE_INT }; }
 
@@ -239,26 +249,27 @@ static Type make_type_void() { return (Type) { .class = TYPE_VOID }; }
 
 
 static bool type_eq(const Type * a, const Type * b) {
-    if (a->class != b->class) return false;
-    if (a == b) return true;
-    switch (a->class) {
-        case TYPE_INT: case TYPE_STR:
-            return true;
+
+    if (a->class != b->class) return 0;
+
+    if (is_type_primitive(a->class)) return 1;
+    if (a == b) return 1;
+
+    switch ((int) a->class) {
         case TYPE_FUNCTION: {
             u32 alen = get_param_count(*a);
             u32 blen = get_param_count(*b);
-            if (alen != blen) return false;
+            if (alen != blen) return 0;
             Type * atypes = get_param_types(*a);
             Type * btypes = get_param_types(*b);
             for (u32 i = 0; i < alen; i++) {
                 if (!type_eq(&atypes[i], &btypes[i]))
-                    return false;
+                    return 0;
             }
-            return true;
+            return 1;
         }
-        default: PANIC();
     }
-    return SATISFY_COMPILER;
+    unreachable return 0;
 }
 
 
@@ -291,29 +302,29 @@ static Expr make_expr_str_literal(LStr from) {
 
 
 static Expr make_expr_builtin(
-    BuiltinClass class, TypeClass ret_class, OpBuiltin ** op_ptr
+    BuiltinClass class, TypeClass ret_type_class, OpBuiltin ** op_ptr
 ) {
-    return MAKE_EXPR
-        (OP_BUILTIN, sizeof_type(ret_class),*op_ptr, OpBuiltin, { .class = class });
+    return MAKE_EXPR(
+        OP_BUILTIN, sizeof_type(ret_type_class),*op_ptr,
+        OpBuiltin, { .class = class }
+    );
 }
 
 
-
-static Expr make_expr_call(Expr fn, TypeClass ret_class, OpCall ** op_ptr) {
+static Expr make_expr_call(Expr fn, TypeClass ret_type_class, OpCall ** op_ptr) {
     return MAKE_EXPR
-        (OP_CALL, sizeof_type(ret_class), *op_ptr, OpCall, { .fn = fn });
+        (OP_CALL, sizeof_type(ret_type_class), *op_ptr, OpCall, { .fn = fn });
 }
 
 
-static Expr make_expr_var(TypeClass type_class, Ident ident) {
+static Expr make_expr_var(Ident ident, TypeClass type_class) {
     OpVar * _;
     return MAKE_EXPR(OP_VAR, sizeof_type(type_class), _, OpVar, { ident });
 }
 
 
-static Expr make_expr_assignment(TypeClass type_class, Ident ident, Expr val) {
-    OpAssign * _;
-    return MAKE_EXPR
+static Expr make_expr_assignment(Expr val, Ident ident, TypeClass type_class) {
+    OpAssign * _; return MAKE_EXPR
         (OP_ASSIGN, sizeof_type(type_class), _, OpAssign, { ident, val });
 }
 
@@ -334,6 +345,12 @@ static Expr make_expr_if_else(Expr cond, Expr if_expr, Expr else_expr) {
 
 static Expr make_expr_while(Expr cond, Expr while_expr) {
     OpIf * _; return MAKE_EXPR(OP_WHILE, 0, _, OpIf, { cond, while_expr });
+}
+
+
+static Expr make_expr_seq(Expr * exprs, u32 expr_count, TypeClass ret_type_class) {
+    OpSeq * _; return MAKE_EXPR
+        (OP_SEQ, sizeof_type(ret_type_class), _, OpSeq, { exprs, expr_count });
 }
 
 
@@ -386,8 +403,6 @@ static void create_param_defs(const Def * function_def, Def * buf) {
  * -----------------------------------------------------------------------------
  */
 
-#define B_IDX_SEQ 0
-
 typedef struct {
     char * name;
     struct {
@@ -398,7 +413,6 @@ typedef struct {
 
 
 static const BuiltinProto builtin_protos[] = {
-    "seq",   { "va", B_SEQ },
     "+",     { "ii", B_ADD_I, "vi", B_ADD_VI,},
     "*",     { "ii", B_MUL_I, "vi", B_MUL_VI },
     "-",     { "ii", B_SUB_I },
@@ -409,12 +423,10 @@ static const BuiltinProto builtin_protos[] = {
 
 static u32 match_type_sh(const char * sh, Type type) {
     switch (*sh) {
-        case 'a':
-            return 1;
-        case 'i':
-            return (type.class == TYPE_INT);
-        case 's':
-            return (type.class == TYPE_STR);
+        case 'a': return 1;
+        case 'i': return (type.class == TYPE_INT);
+        case 's': return (type.class == TYPE_STR);
+        case 'n': return (type.class == TYPE_VOID);
         case 'p':
             if (type.class != TYPE_FUNCTION) return 0;
             u32 param_count = *(++sh);
@@ -537,35 +549,35 @@ static void parse_call_params(
 }
 
 
-static void parse_variadic_call_params(
-    Token const ** tokens, Context * context,
-    Expr ** out_params, Type ** out_param_types, u32 * out_param_count
+static void parse_pseudo_list(
+    Token const ** tokens, Context * context, TkClass open_delim,
+    Expr ** out_items, Type ** out_types, u32 * out_count
 ) {
+    skip_expect(*tokens, open_delim, "expected opening bracket/parenthesis");
+
+    TkClass close_delim = opposite_delim(open_delim);
+
     da(Expr) params = {};
     da(Type) param_types = {};
 
-    ASSERT(delim_value(*tokens) > 0);
-    TkClass close = opposite_delim((*tokens)->class);
-    (*tokens)++;
 
     u32 i = 0;
-    for(; (*tokens)->class != close&& (*tokens)->class != TK_EOF; i++) {
+    for(; (*tokens)->class != close_delim && (*tokens)->class != TK_EOF; i++) {
         Expr param;
         Type param_type;
-        parse_expr(
-            tokens, context,
-            &param, &param_type
-        );
+        parse_expr(tokens, context, &param, &param_type);
         da_append(params, param);
         da_append(param_types, param_type);
     }
 
-    *out_params = aalloc(&code_arena, i * sizeof(Expr));
-    *out_param_types = aalloc(&parser_arena, i * sizeof(Type));
-    *out_param_count = i;
+    skip_expect(*tokens, close_delim, "expected closing bracket/parenthesis");
 
-    memcpy(*out_params, params.items, i * sizeof(Expr));
-    memcpy(*out_param_types, param_types.items, i * sizeof(Type));
+    *out_items = aalloc(&code_arena, i * sizeof(Expr));
+    *out_types = aalloc(&parser_arena, i * sizeof(Type));
+    *out_count = i;
+
+    memcpy(*out_items, params.items, i * sizeof(Expr));
+    memcpy(*out_types, param_types.items, i * sizeof(Type));
 
     da_dealloc(params);
     da_dealloc(param_types);
@@ -600,22 +612,15 @@ static void parse_expr_builtin(
     const Token ** tokens, Context * context, int index,
     Expr * out_expr, Type * out_ret_type
 ) {
-    u32 open = TK_OPEN;
-    if ((*tokens)->class == TK_CB_OPEN) {
-        open = TK_CB_OPEN;
-        ASSERT(index == B_IDX_SEQ);
-    } else {
-        skip(*tokens, TK_IDENT);
-        if ((*tokens)->class != TK_OPEN) error(*tokens, "expected `(`");
-    }
+    skip(*tokens, TK_IDENT);
  
     const Token * params_start = *tokens;
 
     Type * param_types;
     Expr * params;
     u32 param_count;
-    parse_variadic_call_params(
-        tokens, context, &params, &param_types, &param_count
+    parse_pseudo_list(
+        tokens, context, TK_OPEN, &params, &param_types, &param_count
     );
     
     u32 class = get_builtin_class(index, param_types, param_count);
@@ -629,7 +634,29 @@ static void parse_expr_builtin(
     op->args_len = param_count;
 
     *out_ret_type = ret_type;
-    skip(*tokens, opposite_delim(open));
+}
+
+
+static void parse_expr_seq(
+    const Token ** tokens, Context * context,
+    Expr * out_expr, Type * out_ret_type
+) {
+    Expr * exprs;
+    Type * expr_types;
+    u32 expr_count;
+
+    parse_pseudo_list(
+        tokens, context, TK_CB_OPEN, &exprs, &expr_types, &expr_count
+    );
+
+    Type ret_type;
+    if (expr_count)
+        ret_type = expr_types[expr_count - 1];
+    else
+        ret_type = make_type_void();
+
+    *out_ret_type = ret_type;
+    *out_expr = make_expr_seq(exprs, expr_count, ret_type.class);
 }
 
 
@@ -731,7 +758,7 @@ static void parse_ident(
     if (!parse_var(name, *context, &var_type, &ident))
         error(*tokens, "unknown identifier");
 
-    Expr var_expr = make_expr_var(var_type.class, ident);
+    Expr var_expr = make_expr_var(ident, var_type.class);
 
     bool is_call = (*tokens + 1)->class == TK_OPEN;
 
@@ -783,7 +810,7 @@ static void parse_expr_assign(
         var_ident = add_local(context, var_name, var_type);
     }
 
-    *out_expr = make_expr_assignment(var_type.class, var_ident, val);
+    *out_expr = make_expr_assignment(val, var_ident, var_type.class);
     *out_ret_type = var_type;
 }
 
@@ -804,7 +831,7 @@ static void parse_expr(
             (*tokens)++;
             break;
         case TK_CB_OPEN:
-            parse_expr_builtin(tokens, context, B_IDX_SEQ, out_expr, out_ret_type);
+            parse_expr_seq(tokens, context, out_expr, out_ret_type);
             break;
         case TK_IDENT:
             parse_ident(tokens, context, out_expr, out_ret_type);

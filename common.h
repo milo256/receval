@@ -37,6 +37,7 @@ typedef enum {
     OP_IF,
     OP_IF_ELSE,
     OP_WHILE,
+    OP_SEQ,
 } ExprClass;
 
 
@@ -64,19 +65,16 @@ typedef struct {
 typedef i32 Integer;
 
 typedef struct { char * chars; u32 len; } String;
-
 typedef struct { u32 stack_size; Expr body; } Function;
 
+typedef struct {
+    Expr fn;
+    Expr * args;
+    u32 args_len;
+} OpCall;
+
 typedef struct { Ident ident; } OpVar;
-
 typedef struct { Ident ident; Expr val; } OpAssign;
-
-typedef struct { Expr cond, while_expr; } OpWhile;
-
-typedef struct { Expr cond, if_expr; } OpIf;
-
-typedef struct { Expr cond, if_expr, else_expr; } OpIfElse;
-
 
 typedef struct {
     BuiltinClass class;
@@ -84,12 +82,10 @@ typedef struct {
     u32 args_len;
 } OpBuiltin;
 
-
-typedef struct {
-    Expr fn;
-    Expr * args;
-    u32 args_len;
-} OpCall;
+typedef struct { Expr cond, if_expr; } OpIf;
+typedef struct { Expr cond, if_expr, else_expr; } OpIfElse;
+typedef struct { Expr cond, while_expr; } OpWhile;
+typedef struct { Expr * exprs; u32 count; } OpSeq;
 
 
 
