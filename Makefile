@@ -1,7 +1,7 @@
 CC := gcc
 ASAN := 1
 RELEASE := 0
-APP_NAME := receval
+APPNAME := receval
 
 CFLAGS := -std=c99 -Wall -Wextra -Wno-missing-braces
 LDFLAGS :=
@@ -9,10 +9,14 @@ DEBUGFLAGS := -g -O0
 RELEASEFLAGS := -g -O0
 
 
-SRCS := receval.c parser.c tokenizer.c utils.c
-HEADERS := common.h ident.h arena.h da.h tokenizer.h parser.h
 OBJDIR := obj
-OBJS = $(patsubst %.c, $(OBJDIR)/%.o, $(SRCS))
+SRCDIR := src
+
+SRC_NAMES := receval.c parser.c tokenizer.c utils.c
+HEADER_NAMES := common.h ident.h arena.h da.h tokenizer.h parser.h
+
+HEADERS := $(patsubst %, $(SRCDIR)/%, $(HEADER_NAMES))
+OBJS := $(patsubst %.c, $(OBJDIR)/%.o, $(SRC_NAMES))
 
 
 ifeq ($(RELEASE), 1)
@@ -26,17 +30,16 @@ endif
 endif
 
 all: $(OBJS)
-	$(CC) $(LDFLAGS) $^ -o $(APP_NAME)
+	$(CC) $(LDFLAGS) $^ -o $(APPNAME)
 
 run: all
-	./$(APP_NAME)
+	./$(APPNAME)
 
-$(OBJDIR)/%.o: %.c $(HEADERS)
+$(OBJDIR)/%.o: $(SRCDIR)/%.c
 	mkdir -p $(OBJDIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm $(APP_NAME) $(OBJDIR)/*.o
-
+	rm $(APPNAME) $(OBJDIR)/*.o
 
 .PHONY: clean

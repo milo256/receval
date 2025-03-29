@@ -424,6 +424,7 @@ static const BuiltinProto builtin_protos[] = {
     "print", { "i",  B_PRINT_I, "s", B_PRINT_S },
 };
 
+
 static const Type builtin_types[] = {
     [B_ADD_I]    = ptype(TYPE_INT),
     [B_SUB_I]    = ptype(TYPE_INT),
