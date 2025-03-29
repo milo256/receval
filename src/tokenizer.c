@@ -1,7 +1,5 @@
 #include "tokenizer.h"
 
-#include "da.h"
-
 #include <ctype.h>
 #include <string.h>
 

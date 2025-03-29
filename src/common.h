@@ -22,8 +22,6 @@ typedef int8_t i8;
  * -----------------------------------------------------------------------------
  */
 
-#define SATISFY_COMPILER 69420
-
 #define MAX(A,B) ((A > B) ? A : B)
 
 #define MIN(A,B) ((A > B) ? B : A)
@@ -32,17 +30,31 @@ typedef int8_t i8;
 
 #ifdef NDEBUG
 #define ASSERT(A) ((void) 0)
+#define ASSERT_EQ(A, B) ((void) 0)
 #else
-#define ASSERT(A) do{ if (!(A)) {                                                      \
+
+#define ASSERT_EQ(A, B) if ((A) != (B)) { \
+    fprintf( \
+        stderr, "Assertion failed on %s:%d: %s (%ld) != %s (%ld)\n", \
+        __FILE__, __LINE__, #A, ((long) A), #B, ((long) B) \
+    ); \
+    exit(-1); \
+}
+
+
+#define ASSERT(A) do{ if (!(A)) {                                              \
     fprintf(stderr, "Assertion failed on %s:%d: %s\n", __FILE__, __LINE__, #A);\
-    exit(-1);                                                                           \
-}} while(0)
+    exit(-1);                                                                  \
+} } while(0)
+
 #endif
 
 
-#define PANIC(...) do {                                  \
-    fprintf(stderr, "Panic! %s:%d\n", __FILE__, __LINE__); \
-    exit(-1);                                            \
+#define PANIC(...) do { \
+    fprintf(stderr, "Panic! %s:%d", __FILE__, __LINE__); \
+    fprintf(stderr," " __VA_ARGS__); \
+    fprintf(stderr,"\n"); \
+    exit(-1); \
 } while(0)
 
 #define unreachable \

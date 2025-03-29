@@ -10,6 +10,7 @@ int main(int argc, char * argv[]) {
     FILE * f = fopen(argv[1], "r");
 
     if (!f) return fprintf(stderr, "file doesn't exist\n"), -1;
+    
 
     fseek(f, 0, SEEK_END);
     u32 code_len = ftell(f);
@@ -18,7 +19,7 @@ int main(int argc, char * argv[]) {
     fread(code, 1, code_len, f); 
     code[code_len] = 0;
     fclose(f);
-
+    
 
     AST ast = parse_code(code);
     int ret = eval_ast(ast);

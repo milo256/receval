@@ -35,7 +35,7 @@ all: $(OBJS)
 run: all
 	./$(APPNAME)
 
-$(OBJDIR)/%.o: $(SRCDIR)/%.c
+$(OBJDIR)/%.o: $(SRCDIR)/%.c $(HEADERS)
 	mkdir -p $(OBJDIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 

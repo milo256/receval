@@ -209,19 +209,19 @@ static u32 sizeof_type(int type_class) {
 
 
 static Type * get_ret_type(Type function) {
-    ASSERT(function.class == TYPE_FUNCTION);
+    ASSERT_EQ(function.class, TYPE_FUNCTION);
     return &((FunctionTypeData *) function.data)->ret_type;
 }
 
 
 static Type * get_param_types(Type function) {
-    ASSERT(function.class == TYPE_FUNCTION);
+    ASSERT_EQ(function.class, TYPE_FUNCTION);
     return (Type *) ((void *) function.data + sizeof(FunctionTypeData));
 }
 
 
 static u32 get_param_count(Type function) {
-    ASSERT(function.class == TYPE_FUNCTION);
+    ASSERT_EQ(function.class, TYPE_FUNCTION);
     return ((FunctionTypeData *) function.data)->param_count;
 }
 
@@ -379,7 +379,7 @@ static Ident add_local(Context * ctx, LStr name, Type type) {
 
 
 static void create_param_defs(const Def * function_def, Def * buf) {
-    ASSERT(function_def->type.class == TYPE_FUNCTION);
+    ASSERT_EQ(function_def->type.class, TYPE_FUNCTION);
     u32 offset = 0,
         param_count = get_param_count(function_def->type);
 
@@ -505,7 +505,7 @@ static u32 get_builtin_class(u32 index, const Type * param_types, u32 param_coun
 static Integer lstr_to_int(LStr str) {
     char * end_ptr;
     Integer ret = strtol(str.chars, &end_ptr, 10); 
-    ASSERT(end_ptr == str.chars + str.len);
+    ASSERT_EQ(end_ptr, str.chars + str.len);
     return ret;
 }
 
@@ -515,7 +515,7 @@ static Integer lstr_to_int(LStr str) {
  * -----------------------------------------------------------------------------
  */
 
-#define skip(token_ptr, token_class) ASSERT((token_ptr)++->class == (token_class))
+#define skip(token_ptr, token_class) ASSERT_EQ((token_ptr)++->class, (token_class))
 
 #define skip_expect(token_ptr, token_class, ...) \
     if ((token_ptr)++->class != (token_class)) error((token_ptr), __VA_ARGS__)
@@ -992,7 +992,7 @@ static void parse_tokens(
                 if (lstr_eq(def->name, LSTR("main"))) *out_main = fn;
                 break;
             } case TYPE_INT:
-                ASSERT(((Token *)def->init)->class == TK_INT);
+                ASSERT_EQ(((Token *)def->init)->class, TK_INT);
                 *(Integer *)(global_values + def->offset) = lstr_to_int(((Token*)def->init)->val);
                 break;
             default: PANIC();
