@@ -233,6 +233,8 @@ static Type make_type_fn_ptr(Type ret_type, u32 param_count) {
 
 static Type make_type_int() { return (Type) { .class = TYPE_INT }; }
 
+static Type make_type_str() { return (Type) { .class = TYPE_STR }; }
+
 static Type make_type_void() { return (Type) { .class = TYPE_VOID }; }
 
 
@@ -280,6 +282,14 @@ static Expr make_expr_int_literal(Integer val) {
 }
 
 
+static Expr make_expr_str_literal(LStr from) {
+    String str = { .chars = aalloc(&code_arena, from.len), .len = from.len };
+    memcpy(str.chars, from.chars, from.len);
+    String * _;
+    return MAKE_EXPR(STR_LITERAL, sizeof(String), _, String, str);
+}
+
+
 static Expr make_expr_builtin(
     BuiltinClass class, TypeClass ret_class, OpBuiltin ** op_ptr
 ) {
@@ -301,10 +311,10 @@ static Expr make_expr_var(TypeClass type_class, Ident ident) {
 }
 
 
-static Expr make_expr_assignment(Type type, Ident ident, Expr val) {
+static Expr make_expr_assignment(TypeClass type_class, Ident ident, Expr val) {
     OpAssign * _;
     return MAKE_EXPR
-        (OP_ASSIGN, sizeof_type(type.class), _, OpAssign, { ident, val });
+        (OP_ASSIGN, sizeof_type(type_class), _, OpAssign, { ident, val });
 }
 
 
@@ -393,7 +403,7 @@ static const BuiltinProto builtin_protos[] = {
     "*",     { "ii", B_MUL_I, "vi", B_MUL_VI },
     "-",     { "ii", B_SUB_I },
     "/",     { "ii", B_DIV_I },
-    "print", { "i",  B_PRINT_I },
+    "print", { "i",  B_PRINT_I, "s", B_PRINT_S },
 };
 
 
@@ -403,6 +413,8 @@ static u32 match_type_sh(const char * sh, Type type) {
             return 1;
         case 'i':
             return (type.class == TYPE_INT);
+        case 's':
+            return (type.class == TYPE_STR);
         case 'p':
             if (type.class != TYPE_FUNCTION) return 0;
             u32 param_count = *(++sh);
@@ -771,7 +783,7 @@ static void parse_expr_assign(
         var_ident = add_local(context, var_name, var_type);
     }
 
-    *out_expr = make_expr_assignment(var_type, var_ident, val);
+    *out_expr = make_expr_assignment(var_type.class, var_ident, val);
     *out_ret_type = var_type;
 }
 
@@ -784,6 +796,11 @@ static void parse_expr(
         case TK_INT:
             *out_ret_type = make_type_int();
             *out_expr = make_expr_int_literal(lstr_to_int((*tokens)->val));
+            (*tokens)++;
+            break;
+        case TK_STR:
+            *out_ret_type = make_type_str();
+            *out_expr = make_expr_str_literal((*tokens)->val);
             (*tokens)++;
             break;
         case TK_CB_OPEN:

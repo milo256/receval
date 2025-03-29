@@ -15,7 +15,7 @@ typedef enum {
     TK_CB_CLOSE = 6,
     TK_INT,
     TK_FLOAT,
-    TK_STRING,
+    TK_STR,
     TK_FUNCTION,
     TK_ARROW,
     TK_IDENT,

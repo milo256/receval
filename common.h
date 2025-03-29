@@ -16,7 +16,7 @@ typedef struct {
     u32 len;
 } LStr;
 
-#define TYPE_MAX_SIZE sizeof(void *)
+#define TYPE_MAX_SIZE (2 * sizeof(void *))
 
 
 
@@ -49,7 +49,8 @@ typedef enum {
     B_ADD_VI,
     B_MUL_VI,
     B_SEQ,
-    B_PRINT_I
+    B_PRINT_I,
+    B_PRINT_S
 } BuiltinClass;
 
 
@@ -62,7 +63,7 @@ typedef struct {
 
 typedef i32 Integer;
 
-typedef struct { char * chars, len; } String;
+typedef struct { char * chars; u32 len; } String;
 
 typedef struct { u32 stack_size; Expr body; } Function;
 

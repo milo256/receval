@@ -154,7 +154,7 @@ static Token get_token(State * s) {
             move_ptr(s, 1);
             while (*++s->eptr != '"')
                 if (!*s->eptr) PANIC("tokenizer error");
-            Token tk = make_token(s, TK_STRING);
+            Token tk = make_token(s, TK_STR);
             move_ptr(s, 1);
             return tk;
         case PARSE_EOF:

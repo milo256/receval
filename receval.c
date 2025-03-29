@@ -38,7 +38,6 @@ void eval_expr(Expr *, void *, void *, void *);
     *(type *)ret_ptr = acc; \
 } while(0)
 
-
 void eval_builtin(
     OpBuiltin * builtin, void * globals, void * locals, void * ret_ptr
 ) {
@@ -75,6 +74,16 @@ void eval_builtin(
             eval_expr(params, globals, locals, ret_ptr);
             printf("%d\n", *((Integer *) ret_ptr));
             break;
+
+        case B_PRINT_S:
+            {
+                String str;
+                eval_expr(params, globals, locals, &str);
+                for (u32 i = 0; i < str.len; i++)
+                    putchar(str.chars[i]);
+                putchar('\n');
+            }
+            break; 
             
         default:PANIC();
     }
@@ -163,10 +172,14 @@ void eval_expr(
         case INT_LITERAL:
             *(Integer *) ret_ptr = *(Integer *) expr->expr;
             break;
+        case STR_LITERAL:
+            *(String *) ret_ptr = *(String *) expr->expr;
+            break;
         case FN_LITERAL:
             *(Function *) ret_ptr = *(Function *) expr->expr;
             break;
         default:
+            printf("%d\n", expr->class);
             PANIC();
     }
 }
