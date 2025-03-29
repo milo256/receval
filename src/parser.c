@@ -1,9 +1,7 @@
 #include "parser.h"
 
 #include "common.h"
-#include "ident.h"
-#include "arena.h"
-#include "da.h"
+#include "expr.h"
 #include "tokenizer.h"
 
 #include <stdlib.h>
@@ -23,7 +21,7 @@
 
 
 /* Receval Types
- *------------------------------------------------------------------------------
+ * -----------------------------------------------------------------------------
  */
 
 #define DEF_PRIMITIVE_TYPES(f) \
@@ -74,7 +72,7 @@ typedef struct {
 
 
 /* Definition Types
- *------------------------------------------------------------------------------
+ * -----------------------------------------------------------------------------
  */
 
 /* we don't need ident because ident is just offset + location, and location is
@@ -102,19 +100,19 @@ typedef da(Def) DefList;
 
 
 /* Memory Arenas
- *------------------------------------------------------------------------------
+ * -----------------------------------------------------------------------------
  */
 
 /* freed after parsing */
-static Arena parser_arena;
+static Arena * parser_arena;
 
 /* freed after execution */
-static Arena code_arena;
+static Arena * code_arena;
 
 
 
 /* Error Handling
- *------------------------------------------------------------------------------
+ * -----------------------------------------------------------------------------
  */
 
 static void error(Token const * tk, char * msg) {
@@ -234,7 +232,7 @@ static Type make_type_fn_ptr(Type ret_type, u32 param_count) {
         .param_count = param_count,
     };
     void * ptr = aalloc(
-        &parser_arena,
+        parser_arena,
         sizeof(FunctionTypeData) + data.param_count * sizeof(Type)
     );
     *(FunctionTypeData *)ptr = data;
@@ -283,7 +281,7 @@ static bool type_eq(const Type * a, const Type * b) {
  */
 
 #define MAKE_EXPR(class_val, ret_size_val, inner_var_ptr, inner_type, ...) \
-    (((inner_var_ptr) = aalloc(&code_arena, sizeof(inner_type))), \
+    (((inner_var_ptr) = aalloc(code_arena, sizeof(inner_type))), \
     (*(inner_var_ptr) = (inner_type) __VA_ARGS__), \
     (Expr) { \
         .class = (class_val), \
@@ -298,7 +296,7 @@ static Expr make_expr_int_literal(Integer val) {
 
 
 static Expr make_expr_str_literal(LStr from) {
-    String str = { .chars = aalloc(&code_arena, from.len), .len = from.len };
+    String str = { .chars = aalloc(code_arena, from.len), .len = from.len };
     memcpy(str.chars, from.chars, from.len);
     String * _;
     return MAKE_EXPR(STR_LITERAL, sizeof(String), _, String, str);
@@ -542,7 +540,7 @@ static void parse_call_params(
     Type * expected_param_types, u32 expected_param_count,
     Expr ** out_params, u32 * out_param_count
 ) {
-    Expr * params = aalloc(&code_arena, expected_param_count * sizeof(Expr));
+    Expr * params = aalloc(code_arena, expected_param_count * sizeof(Expr));
 
     ASSERT(delim_value(*tokens) > 0);
     TkClass close = opposite_delim((*tokens)->class);
@@ -596,8 +594,8 @@ static void parse_pseudo_list(
 
     skip_expect(*tokens, close_delim, "expected closing bracket/parenthesis");
 
-    *out_items = aalloc(&code_arena, i * sizeof(Expr));
-    *out_types = aalloc(&parser_arena, i * sizeof(Type));
+    *out_items = aalloc(code_arena, i * sizeof(Expr));
+    *out_types = aalloc(parser_arena, i * sizeof(Type));
     *out_count = i;
 
     memcpy(*out_items, params.items, i * sizeof(Expr));
@@ -943,7 +941,7 @@ static void parse_global_def(const Token ** tokens, DefList * globals) {
         u32 param_count = parser_count_params(token);
         skip(token, TK_OPEN);
         
-        param_names = aalloc(&code_arena, sizeof(LStr) * param_count);
+        param_names = aalloc(code_arena, sizeof(LStr) * param_count);
 
         type = make_type_fn_ptr(ret_type, param_count); 
         for (u32 i = 0; i < param_count; i++) {
@@ -979,13 +977,13 @@ static void parse_tokens(
     while((*tokens)->class != TK_EOF)
         parse_global_def(tokens, &global_defs);
 
-    void * global_values = aalloc(&code_arena, defs_size(global_defs));
+    void * global_values = aalloc(code_arena, defs_size(global_defs));
 
     for (u32 i = 0; i < global_defs.len; i++) {
         Def * def = &global_defs.items[i];
         switch (def->type.class) {
             case TYPE_FUNCTION: {
-                Function * fn = aalloc(&code_arena, sizeof(Function));
+                Function * fn = aalloc(code_arena, sizeof(Function));
                 *fn = parse_function_code(
                     def, global_defs.items, global_defs.len, NULL
                 ); 
@@ -1011,16 +1009,20 @@ static void parse_tokens(
  * -----------------------------------------------------------------------------
  */
 
-void free_code(void) { afree(code_arena); }
+void free_code(AST ast) { afree(ast.arena); }
 
 
-void parse_code(
-    char * code, void ** out_globals,
-    Function ** out_main, bool * out_ignore_ret
-) {
-    parser_arena = arena_init();
-    code_arena = arena_init();
-    const Token * tokens = tokenize(code, &code_arena);
-    parse_tokens(&tokens, out_globals, out_main, out_ignore_ret);
-    afree(parser_arena);
+AST parse_code(const char * code) {
+    AST ast = { .arena = arena_init() };
+    parser_arena = malloc(sizeof(Arena));
+    *parser_arena = arena_init();
+    code_arena = &ast.arena;
+
+    const Token * tokens = tokenize(code, code_arena);
+    parse_tokens(&tokens, &ast.globals, &ast.main_fn, &ast.ignore_ret);
+
+    afree(*parser_arena);
+    free(parser_arena);
+
+    return ast;
 }

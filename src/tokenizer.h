@@ -1,6 +1,5 @@
 #pragma once
 #include "common.h"
-#include "arena.h"
 
 
 typedef enum {
@@ -36,5 +35,5 @@ typedef struct {
 
 void print_tokens(const Token * tokens);
 
-Token * tokenize(char *, Arena *);
+Token * tokenize(const char *, Arena *);
 

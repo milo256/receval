@@ -1,11 +1,4 @@
-#include "common.h"
-#include "parser.h"
-#include "ident.h"
-
-
-/* my z key is broken. sof = sizeof and b at the end of a
- * variable name means it's a size in (b)ytes */
-#define sof sizeof
+#include "eval.h"
 
 
 /* ever wondered what happens to your function returns
@@ -13,12 +6,10 @@
 char DISCARD_BUF[TYPE_MAX_SIZE];
 void * const DISCARD = DISCARD_BUF;
 
-
-void eval_function(Function *, void *, void *, void *);
-
-void eval_expr(Expr *, void *, void *, void *);
+static void eval_expr(Expr *, void *, void *, void *);
 
 #define seval_expr(expr, ret_ptr) eval_expr((expr), globals, locals, (ret_ptr))
+
 
 #define do_2op(type, op) do { \
     ASSERT(param_count == 2); \
@@ -27,6 +18,7 @@ void eval_expr(Expr *, void *, void *, void *);
     seval_expr(params + 1, &rhs); \
     *(type *)ret_ptr = lhs op rhs; \
 } while(0)
+
 
 #define do_vop(type, op) do { \
     type acc = 0; \
@@ -38,7 +30,8 @@ void eval_expr(Expr *, void *, void *, void *);
     *(type *)ret_ptr = acc; \
 } while(0)
 
-void eval_builtin(
+
+static void eval_builtin(
     OpBuiltin * builtin, void * globals, void * locals, void * ret_ptr
 ) {
     Expr * params = builtin->args;
@@ -84,14 +77,14 @@ void eval_builtin(
 }
 
 
-void eval_if(OpIf * op, void * globals, void * locals) {
+static void eval_if(OpIf * op, void * globals, void * locals) {
     Integer condition;
     seval_expr(&op->cond, &condition);
     if (condition) seval_expr(&op->if_expr, DISCARD);
 }
 
 
-void eval_if_else(OpIfElse * op, void * globals, void * locals, void * ret_ptr) {
+static void eval_if_else(OpIfElse * op, void * globals, void * locals, void * ret_ptr) {
     Integer condition;
     seval_expr(&op->cond, &condition);
     if (condition) seval_expr(&op->if_expr, ret_ptr);
@@ -99,7 +92,7 @@ void eval_if_else(OpIfElse * op, void * globals, void * locals, void * ret_ptr) 
 }
 
 
-void eval_while(OpWhile * op, void * globals, void * locals) {
+static void eval_while(OpWhile * op, void * globals, void * locals) {
     Integer condition;
     for(;;) {
         seval_expr(&op->cond, &condition);
@@ -109,7 +102,7 @@ void eval_while(OpWhile * op, void * globals, void * locals) {
 }
 
 
-void eval_seq(OpSeq * op, void * globals, void * locals, void * ret_ptr) {
+static void eval_seq(OpSeq * op, void * globals, void * locals, void * ret_ptr) {
     if (!op->count) return;
     
     for (u32 i = 0; i < op->count - 1; i++) {
@@ -120,7 +113,7 @@ void eval_seq(OpSeq * op, void * globals, void * locals, void * ret_ptr) {
 }
 
 
-void eval_expr(
+static void eval_expr(
     Expr * expr, void * globals, void * locals, void * ret_ptr
 ) {
     Ident var;
@@ -192,7 +185,7 @@ void eval_expr(
 }
 
 
-int eval_main(Function * fn, void * globals, bool ignore_ret) {
+static int eval_main(Function * fn, void * globals, bool ignore_ret) {
     void * ret_ptr = malloc(TYPE_MAX_SIZE);
 
     void * locals = malloc(fn->stack_size);
@@ -207,27 +200,7 @@ int eval_main(Function * fn, void * globals, bool ignore_ret) {
 }
 
 
-int main(int argc, char * argv[]) {
-    if (argc < 2) return fprintf(stderr, "provide file\n"), -1;
-    if (argc > 2) return fprintf(stderr, "too many arguments\n"), -1;
-
-    FILE * f = fopen(argv[1], "r");
-
-    if (!f) return fprintf(stderr, "file doesn't exist\n"), -1;
-
-    fseek(f, 0, SEEK_END);
-    u32 code_len = ftell(f);
-    rewind(f);
-    char * code = malloc(code_len + 1);
-    fread(code, 1, code_len, f); 
-    code[code_len] = 0;
-    fclose(f);
-
-    void * globals;
-    Function * main_fn;
-    bool ignore_ret;
-    parse_code(code, &globals, &main_fn, &ignore_ret);
-    int ret = eval_main(main_fn, globals, ignore_ret);
-    free_code();
-    return ret;
+int eval_ast(AST ast) {
+    return eval_main(ast.main_fn, ast.globals, ast.ignore_ret);
 }
+

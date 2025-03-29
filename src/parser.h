@@ -1,10 +1,7 @@
 #pragma once
-#include "common.h"
+#include "expr.h"
 
 
-void parse_code(
-    char * code, void ** out_globals,
-    Function ** out_main, bool * out_ignore_ret
-);
+AST parse_code(const char * code);
 
-void free_code(void);
+void free_code(AST);

@@ -38,7 +38,7 @@ enum {
     CMT_END,
 };
 
-static u32 comment_class(char * ch) {
+static u32 comment_class(const char * ch) {
     if (ch[0] == '-' && ch[1] == '-') return CMT_LINE;
     else if (ch[0] == '-' && ch[1] == '!') return CMT_BEGIN;
     else if (ch[0] == '!' && ch[1] == '-') return CMT_END;
@@ -51,11 +51,11 @@ static bool is_whitespace(char ch) {
     return (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r');
 }
 
-static bool is_splitting(char * ch) {
+static bool is_splitting(const char * ch) {
     return
         is_whitespace(*ch) || (!*ch) || (*ch == '"') || comment_class(ch) ||
-        symbolic_token_class((LStr) {ch, 1}) ||
-        symbolic_token_class((LStr) {ch, 2});
+        symbolic_token_class((LStr) {(char *) ch, 1}) ||
+        symbolic_token_class((LStr) {(char *) ch, 2});
 }
 
 
@@ -71,13 +71,13 @@ enum {
 
 typedef struct {
     u32 parsing;
-    char * sptr, * eptr;
+    const char * sptr, * eptr;
     u32 line, col;
 } State;
 
 
 static LStr curstr(const State * s) {
-    return (LStr) { .chars = s->sptr, .len = s->eptr - s->sptr };
+    return (LStr) { .chars = (char *) s->sptr, .len = s->eptr - s->sptr };
 }
 
 
@@ -103,7 +103,7 @@ static Token make_token(State * s, u32 class) {
     return token;
 }
 
-static State state_init(char * code) { return (State) { PARSE_BLANK, code, code, 1, 1 }; }
+static State state_init(const char * code) { return (State) { PARSE_BLANK, code, code, 1, 1 }; }
 
 
 void print_token(Token token);
@@ -127,7 +127,7 @@ static Token get_token(State * s) {
 
             break;;
         case PARSE_CMT_LINE:
-            for (char * ch = s->sptr;; ch++)
+            for (const char * ch = s->sptr;; ch++)
                 if (is_line_end(*ch)) {
                     s->sptr = s->eptr = ch;
                     s->col = 0, s->line++;
@@ -188,7 +188,7 @@ void print_tokens(const Token * tokens) {
 }
 
 
-Token * tokenize(char * code, Arena * arena) {
+Token * tokenize(const char * code, Arena * arena) {
     State s = state_init(code);
 
     da(Token) token_list = {};

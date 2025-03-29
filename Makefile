@@ -12,8 +12,8 @@ RELEASEFLAGS := -g -O0
 OBJDIR := obj
 SRCDIR := src
 
-SRC_NAMES := receval.c parser.c tokenizer.c utils.c
-HEADER_NAMES := common.h ident.h arena.h da.h tokenizer.h parser.h
+SRC_NAMES := main.c parser.c tokenizer.c eval.c common.c
+HEADER_NAMES := parser.h tokenizer.h common.h expr.h
 
 HEADERS := $(patsubst %, $(SRCDIR)/%, $(HEADER_NAMES))
 OBJS := $(patsubst %.c, $(OBJDIR)/%.o, $(SRC_NAMES))
