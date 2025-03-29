@@ -639,9 +639,9 @@ static void parse_expr_builtin(
     );
     
     u32 class = get_builtin_class(index, param_types, param_count);
-    Type ret_type = get_builtin_type(class);
-
     if (class == B_NONE) error(params_start, "incorrect parameters");
+    
+    Type ret_type = get_builtin_type(class);
     
     OpBuiltin * op;
     *out_expr = make_expr_builtin(class, &op);
