@@ -1,8 +1,8 @@
 #include "eval.h"
 
 
-/* ever wondered what happens to your function returns
- * when you cast them to (void)? */
+/* ever wondered what happens to your function
+ * returns when you cast them to (void)? */
 char DISCARD_BUF[TYPE_MAX_SIZE];
 void * const DISCARD = DISCARD_BUF;
 
@@ -84,7 +84,9 @@ static void eval_if(OpIf * op, void * globals, void * locals) {
 }
 
 
-static void eval_if_else(OpIfElse * op, void * globals, void * locals, void * ret_ptr) {
+static void eval_if_else(
+    OpIfElse * op, void * globals, void * locals, void * ret_ptr
+) {
     Integer condition;
     seval_expr(&op->cond, &condition);
     if (condition) seval_expr(&op->if_expr, ret_ptr);
@@ -113,46 +115,62 @@ static void eval_seq(OpSeq * op, void * globals, void * locals, void * ret_ptr) 
 }
 
 
+static void * get_var_ptr(Ident ident, void * globals, void * locals) {
+    switch (var_location(ident)) {
+        case GLOBAL: return globals + var_offset(ident);
+        case LOCAL: return locals + var_offset(ident);
+        default: PANIC();
+    }
+}
+
+
+static void eval_var(
+    OpVar * var, void * globals, void * locals, void * ret_ptr
+) {
+    void * var_ptr = get_var_ptr(var->ident, globals, locals);
+    memcpy(ret_ptr, var_ptr, var->size); 
+}
+
+
+static void eval_assign(
+    OpAssign * op, void * globals, void * locals, void * ret_ptr
+) {
+    void * var_ptr = get_var_ptr(op->ident, globals, locals);
+    eval_expr(&op->val, globals, locals, var_ptr);
+    memcpy(ret_ptr, var_ptr, op->size); 
+}
+
+
+static void eval_call(
+    OpCall * op, void * globals, void * locals, void * ret_ptr
+) {
+    Function * fn;
+    eval_expr(&op->fn, globals, locals, &fn);
+    
+    void * new_locals = malloc(fn->stack_size);
+
+    for (u32 i = 0; i < op->param_count; i++) {
+        void * ptr = new_locals + op->param_offsets[i];
+        eval_expr(&op->params[i], globals, locals, ptr);
+    }
+
+    eval_expr(&fn->body, globals, new_locals, ret_ptr);
+    free(new_locals);
+}
+
+
 static void eval_expr(
     Expr * expr, void * globals, void * locals, void * ret_ptr
 ) {
-    Ident var;
-    OpCall * call;
-    u32 ret_size = expr->ret_size;
     switch (expr->class) {
-        case OP_VAR: case OP_ASSIGN:
-            var = OP_VAR ? ((OpVar *) expr->expr)->ident : ((OpAssign *) expr->expr)->ident;
-            void * loc_ptr[] = { [GLOBAL] = globals, [LOCAL] = locals };
-            void * var_ptr = loc_ptr[var_location(var)] + var_offset(var);
-            if (expr->class == OP_VAR) {
-                memcpy(ret_ptr, var_ptr, ret_size); 
-            } else {
-                OpAssign * op = (OpAssign *) expr->expr;
-                eval_expr(
-                    &op->val, globals, locals,
-                    var_ptr
-                );
-                memcpy(ret_ptr, var_ptr, ret_size); 
-            }
+        case OP_VAR:
+            eval_var(expr->expr, globals, locals, ret_ptr);
+            break;
+        case OP_ASSIGN:
+            eval_assign(expr->expr, globals, locals, ret_ptr);
             break;
         case OP_CALL:
-            call = (OpCall *) expr->expr;
-            Function * fn;
-            eval_expr(&call->fn, globals, locals, &fn);
-            
-            void * new_locals = malloc(fn->stack_size);
-            void * arg_ptr = new_locals;
-
-            for (u32 i = 0; i < call->args_len; i++) {
-                u32 arg_size = call->args[i].ret_size;
-                eval_expr(
-                    &call->args[i], globals, locals,
-                    arg_ptr
-                );
-                arg_ptr += arg_size;
-            }
-            eval_expr(&fn->body, globals, new_locals, ret_ptr);
-            free(new_locals);
+            eval_call(expr->expr, globals, locals, ret_ptr);
             break;
         case OP_BUILTIN:
             eval_builtin(expr->expr, globals, locals, ret_ptr);

@@ -26,7 +26,7 @@ typedef int8_t i8;
 
 #define MIN(A,B) ((A > B) ? B : A)
 
-#define ARRLEN(A) (sof(A)/sof(A[0]))
+#define ARRLEN(A) (sizeof(A)/sizeof(A[0]))
 
 #ifdef NDEBUG
 #define ASSERT(A) ((void) 0)

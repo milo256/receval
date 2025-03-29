@@ -16,8 +16,6 @@
  */
 
 #define MAX_COLS 40
-#define sof sizeof
-
 
 
 /* Receval Types
@@ -280,18 +278,17 @@ static bool type_eq(const Type * a, const Type * b) {
  * -----------------------------------------------------------------------------
  */
 
-#define MAKE_EXPR(class_val, ret_size_val, inner_var_ptr, inner_type, ...) \
+#define MAKE_EXPR(class_val, inner_var_ptr, inner_type, ...) \
     (((inner_var_ptr) = aalloc(code_arena, sizeof(inner_type))), \
     (*(inner_var_ptr) = (inner_type) __VA_ARGS__), \
     (Expr) { \
         .class = (class_val), \
-        .ret_size = (ret_size_val), \
         .expr = (inner_var_ptr) \
     }) \
 
 
 static Expr make_expr_int_literal(Integer val) {
-    Integer * _; return MAKE_EXPR(INT_LITERAL, sizeof(val), _, Integer, val);
+    Integer * _; return MAKE_EXPR(INT_LITERAL, _, Integer, val);
 }
 
 
@@ -299,60 +296,51 @@ static Expr make_expr_str_literal(LStr from) {
     String str = { .chars = aalloc(code_arena, from.len), .len = from.len };
     memcpy(str.chars, from.chars, from.len);
     String * _;
-    return MAKE_EXPR(STR_LITERAL, sizeof(String), _, String, str);
+    return MAKE_EXPR(STR_LITERAL, _, String, str);
 }
 
 
 static Expr make_expr_builtin(
-    BuiltinClass class, TypeClass ret_type_class, OpBuiltin ** op_ptr
+    BuiltinClass class, OpBuiltin ** op_ptr
 ) {
-    return MAKE_EXPR(
-        OP_BUILTIN, sizeof_type(ret_type_class),*op_ptr,
-        OpBuiltin, { .class = class }
-    );
+    return MAKE_EXPR(OP_BUILTIN, *op_ptr, OpBuiltin, { .class = class });
 }
 
-
-static Expr make_expr_call(Expr fn, TypeClass ret_type_class, OpCall ** op_ptr) {
-    return MAKE_EXPR
-        (OP_CALL, sizeof_type(ret_type_class), *op_ptr, OpCall, { .fn = fn });
+static Expr make_expr_call(Expr fn, OpCall ** op_ptr) {
+    return MAKE_EXPR(OP_CALL, *op_ptr, OpCall, { .fn = fn });
 }
 
 
 static Expr make_expr_var(Ident ident, TypeClass type_class) {
     OpVar * _;
-    return MAKE_EXPR(OP_VAR, sizeof_type(type_class), _, OpVar, { ident });
+    return MAKE_EXPR(OP_VAR, _, OpVar, { .ident = ident, .size = sizeof_type(type_class) });
 }
 
 
 static Expr make_expr_assignment(Expr val, Ident ident, TypeClass type_class) {
     OpAssign * _; return MAKE_EXPR
-        (OP_ASSIGN, sizeof_type(type_class), _, OpAssign, { ident, val });
+        (OP_ASSIGN, _, OpAssign, { ident, val, sizeof_type(type_class)});
 }
 
 
 static Expr make_expr_if(Expr cond, Expr if_expr) {
-    OpIf * _; return MAKE_EXPR(OP_IF, 0, _, OpIf, { cond, if_expr });
+    OpIf * _; return MAKE_EXPR(OP_IF, _, OpIf, { cond, if_expr });
 }
 
 
 static Expr make_expr_if_else(Expr cond, Expr if_expr, Expr else_expr) {
     OpIfElse * _;
-    return MAKE_EXPR(
-        OP_IF_ELSE, MAX(if_expr.ret_size, else_expr.ret_size),
-        _, OpIfElse, { cond, if_expr, else_expr }
-    );
+    return MAKE_EXPR(OP_IF_ELSE, _, OpIfElse, { cond, if_expr, else_expr });
 }
 
 
 static Expr make_expr_while(Expr cond, Expr while_expr) {
-    OpIf * _; return MAKE_EXPR(OP_WHILE, 0, _, OpIf, { cond, while_expr });
+    OpIf * _; return MAKE_EXPR(OP_WHILE, _, OpIf, { cond, while_expr });
 }
 
 
-static Expr make_expr_seq(Expr * exprs, u32 expr_count, TypeClass ret_type_class) {
-    OpSeq * _; return MAKE_EXPR
-        (OP_SEQ, sizeof_type(ret_type_class), _, OpSeq, { exprs, expr_count });
+static Expr make_expr_seq(Expr * exprs, u32 expr_count) {
+    OpSeq * _; return MAKE_EXPR(OP_SEQ, _, OpSeq, { exprs, expr_count });
 }
 
 
@@ -535,39 +523,44 @@ static void parse_expr(
 );
 
 
+/* Call needs to know the offsets for each parameter. they can be calculated
+ * here, but it would be nice if this function could access the local defs of
+ * the called function to ensure the offsets are the same.
+ */
 static void parse_call_params(
     const Token ** tokens, Context * context,
     Type * expected_param_types, u32 expected_param_count,
-    Expr ** out_params, u32 * out_param_count
+    Expr ** out_params, u32 ** out_param_offsets, u32 * out_param_count
 ) {
     Expr * params = aalloc(code_arena, expected_param_count * sizeof(Expr));
+    u32 * offsets = aalloc(code_arena, expected_param_count * sizeof(u32));
 
     ASSERT(delim_value(*tokens) > 0);
     TkClass close = opposite_delim((*tokens)->class);
     (*tokens)++;
 
-    u32 i = 0;
+    u32 offs = 0, count = 0;
     for(;
         (*tokens)->class != close
         && (*tokens)->class != TK_EOF
-        && (i < expected_param_count);
-        i++
+        && (count < expected_param_count);
+        count++
     ) {
         Type param_type;
         const Token * param_token = *tokens;
-        parse_expr(
-            tokens, context,
-            &params[i], &param_type
-        );
-        if (!type_eq(&param_type, &expected_param_types[i]))
+        parse_expr(tokens, context, &params[count], &param_type);
+        if (!type_eq(&param_type, &expected_param_types[count]))
             error(param_token, "mismatched parameter types");
+        offsets[count] = offs;
+        offs += sizeof_type(param_type.class);
     }
 
-    if (i != expected_param_count)
+    if (count != expected_param_count)
         error(*tokens + 2, "incorrect number of parameters provided");
 
     *out_params = params;
-    *out_param_count = i;
+    *out_param_offsets = offsets;
+    *out_param_count = count;
 }
 
 
@@ -651,7 +644,7 @@ static void parse_expr_builtin(
     if (class == B_NONE) error(params_start, "incorrect parameters");
     
     OpBuiltin * op;
-    *out_expr = make_expr_builtin(class, ret_type.class, &op);
+    *out_expr = make_expr_builtin(class, &op);
     op->args = params;
     op->args_len = param_count;
 
@@ -678,7 +671,7 @@ static void parse_expr_seq(
         ret_type = make_ptype(TYPE_VOID);
 
     *out_ret_type = ret_type;
-    *out_expr = make_expr_seq(exprs, expr_count, ret_type.class);
+    *out_expr = make_expr_seq(exprs, expr_count);
 }
 
 
@@ -687,12 +680,12 @@ static void parse_expr_call(
     Expr * out_expr, Type * out_ret_type
 ) {
     OpCall * call;
-    *out_expr = make_expr_call(fn_expr, get_ret_type(fn_type)->class, &call);
+    *out_expr = make_expr_call(fn_expr, &call);
  
     skip(*tokens, TK_IDENT);
     parse_call_params(
         tokens, context, get_param_types(fn_type), get_param_count(fn_type),
-        &call->args, &call->args_len
+        &call->params, &call->param_offsets, &call->param_count
     ); 
 
     *out_ret_type = *get_ret_type(fn_type);

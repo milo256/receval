@@ -45,7 +45,6 @@ typedef enum {
 
 typedef struct {
     ExprClass class;
-    u32 ret_size;
     void * expr;
 } Expr;
 
@@ -56,13 +55,12 @@ typedef struct { char * chars; u32 len; } String;
 typedef struct { u32 stack_size; Expr body; } Function;
 
 typedef struct {
-    Expr fn;
-    Expr * args;
-    u32 args_len;
+    Expr fn, * params;
+    u32 * param_offsets, param_count;
 } OpCall;
 
-typedef struct { Ident ident; } OpVar;
-typedef struct { Ident ident; Expr val; } OpAssign;
+typedef struct { Ident ident; u32 size; } OpVar;
+typedef struct { Ident ident; Expr val; u32 size; } OpAssign;
 
 typedef struct {
     BuiltinClass class;
