@@ -26,36 +26,37 @@
  *------------------------------------------------------------------------------
  */
 
-#define DEF_TYPE_CLASSES(f) \
-    \
-    /* Primitive Types */ \
-    \
-    f(TYPE_NONE,     NULL,    0) \
-    f(TYPE_VOID,     "void",  0) \
-    f(TYPE_INT,      "int",   sizeof(Integer)) \
-    f(TYPE_STR,      "str",   sizeof(String)) \
-    \
-    /* Complex Types */ \
-    \
-    f(TYPE_FUNCTION, NULL,    sizeof(int *))
+#define DEF_PRIMITIVE_TYPES(f) \
+/*  | enum name | str name | shorthand | size */\
+    f(TYPE_VOID,  "void",    'n',        0) \
+    f(TYPE_INT,   "int",     'i',        sizeof(Integer)) \
+    f(TYPE_STR,   "str",     's',        sizeof(String))
 
-#define TC_MAKE_ENUM(enum_name, str_name, size) enum_name,
-#define TC_MAKE_SIZE_TABLE(enum_name, str_name, size) [enum_name] = size,
-#define TC_MAKE_NAME_TABLE(enum_name, str_name, size) [enum_name] = str_name,
+#define DEF_COMPLEX_TYPES(f) \
+/*  | enum name      | str name | shorthand | size */\
+    f(TYPE_FUNCTION,   NULL,      'p',        sizeof(int *))
+
+#define DEF_TYPES(f) \
+    DEF_PRIMITIVE_TYPES(f) DEF_COMPLEX_TYPES(f)
+
+#define TC_ENUM(en, sn, sh, sz) en,
+#define TYPE_SIZE_TABLE(en, sn, sh, sz) [en] = sz,
+#define TYPE_NAME_TABLE(en, sn, sh, sz) [en] = sn,
+#define TYPE_SH_TABLE(en, sn, sh, sz) [en] = sh,
 
 typedef enum {
-    DEF_TYPE_CLASSES(TC_MAKE_ENUM)
+    TYPE_NONE,
+    DEF_PRIMITIVE_TYPES(TC_ENUM)
+    FIRST_COMPLEX_TYPE,
+    LAST_PRIMITIVE_TYPE = FIRST_COMPLEX_TYPE - 1,
+    DEF_COMPLEX_TYPES(TC_ENUM)
+    NTYPES
 } TypeClass;
 
 
-static u32 type_sizes[] = {
-    DEF_TYPE_CLASSES(TC_MAKE_SIZE_TABLE)
-};
-
-
-static char * type_names[] = {
-    DEF_TYPE_CLASSES(TC_MAKE_NAME_TABLE)
-};
+static u32 type_sizes[] = { DEF_TYPES(TYPE_SIZE_TABLE) };
+static char * type_names[] = { DEF_TYPES(TYPE_NAME_TABLE) };
+static char type_shorthands[] = { DEF_TYPES(TYPE_SH_TABLE) };
 
 
 typedef struct Type {
@@ -196,12 +197,18 @@ static TypeClass lstr_to_type_class(LStr str) {
  * -----------------------------------------------------------------------------
  */
 
+static bool is_type_primitive(TypeClass class) {
+    return (class < FIRST_COMPLEX_TYPE);
+}
+
+
 static u32 sizeof_type(int type_class) {
     ASSERT(type_class != TYPE_NONE);
     u32 size = type_sizes[type_class];
     ASSERT(size <= TYPE_MAX_SIZE);
     return size;
 }
+
 
 static Type * get_ret_type(Type function) {
     ASSERT(function.class == TYPE_FUNCTION);
@@ -237,15 +244,12 @@ static Type make_type_fn_ptr(Type ret_type, u32 param_count) {
     };
 }
 
-static bool is_type_primitive(TypeClass class) {
-    return (class != TYPE_NONE && class < TYPE_FUNCTION);
+#define ptype(c) ((Type) { .class = (c) })
+
+static Type make_ptype(TypeClass class) {
+    ASSERT(is_type_primitive(class));
+    return ptype(class);
 }
-
-static Type make_type_int() { return (Type) { .class = TYPE_INT }; }
-
-static Type make_type_str() { return (Type) { .class = TYPE_STR }; }
-
-static Type make_type_void() { return (Type) { .class = TYPE_VOID }; }
 
 
 static bool type_eq(const Type * a, const Type * b) {
@@ -406,7 +410,7 @@ static void create_param_defs(const Def * function_def, Def * buf) {
 typedef struct {
     char * name;
     struct {
-        char * type_sh; /*shorthand*/
+        char * params_sh;
         u32 class;
     } variants[4];
 } BuiltinProto;
@@ -420,24 +424,43 @@ static const BuiltinProto builtin_protos[] = {
     "print", { "i",  B_PRINT_I, "s", B_PRINT_S },
 };
 
+static const Type builtin_types[] = {
+    [B_ADD_I]    = ptype(TYPE_INT),
+    [B_SUB_I]    = ptype(TYPE_INT),
+    [B_MUL_I]    = ptype(TYPE_INT),
+    [B_DIV_I]    = ptype(TYPE_INT),
+    [B_ADD_VI]   = ptype(TYPE_INT),
+    [B_MUL_VI]   = ptype(TYPE_INT),
+    [B_PRINT_I]  = ptype(TYPE_VOID),
+    [B_PRINT_S]  = ptype(TYPE_VOID)
+};
 
-static u32 match_type_sh(const char * sh, Type type) {
-    switch (*sh) {
-        case 'a': return 1;
-        case 'i': return (type.class == TYPE_INT);
-        case 's': return (type.class == TYPE_STR);
-        case 'n': return (type.class == TYPE_VOID);
-        case 'p':
-            if (type.class != TYPE_FUNCTION) return 0;
-            u32 param_count = *(++sh);
-            sh++;
-            if (get_param_count(type) != param_count) return 0;
-            for (u32 i = 0; i < param_count; i++)
-                if (!match_type_sh(sh + i, get_param_types(type)[i])) return 0;
 
-            return 1;
+static Type get_builtin_type(BuiltinClass class) {
+    ASSERT(class < ARRLEN(builtin_types));
+    Type type = builtin_types[class];
+    ASSERT(type.class != TYPE_NONE);
+    return type;
+}
+
+
+static u32 match_type_sh(Type type, const char * sh) {
+    char exsh = type_shorthands[type.class];
+    if (*sh != exsh) return 0;
+    if (is_type_primitive(type.class)) return 1;
+
+    switch (type.class) {
+        case TYPE_FUNCTION:
+            {
+                u32 i, param_count = sh[1];
+                if (get_param_count(type) != param_count) return 0;
+                for (i = 0; i < param_count; i++)
+                    if (!match_type_sh(get_param_types(type)[i], sh + i + 1)) return 0;
+
+                return i + 1;
+            }
+        default: PANIC();
     }
-    return 0;
 }
 
 
@@ -447,9 +470,9 @@ static bool match_param_types_sh(const char * sh, const Type * types, u32 count)
         if (*sh == 'v') vtype = sh + 1;
         u32 n;
         if (vtype)
-            n = match_type_sh(vtype, types[i]);
+            n = match_type_sh(types[i], vtype);
         else {
-            n = match_type_sh(sh, types[i]);
+            n = match_type_sh(types[i], sh);
             sh += n;
         }
         if (!n) return 0;
@@ -472,7 +495,7 @@ static bool is_builtin(const LStr name, u32 * out_index) {
 static u32 get_builtin_class(u32 index, const Type * param_types, u32 param_count) {
     const BuiltinProto * proto = &builtin_protos[index];
     char * type_sh;
-    for (u32 i = 0; (type_sh = proto->variants[i].type_sh); i++)
+    for (u32 i = 0; (type_sh = proto->variants[i].params_sh); i++)
         if (match_param_types_sh(type_sh, param_types, param_count))
             return proto->variants[i].class;
 
@@ -624,7 +647,7 @@ static void parse_expr_builtin(
     );
     
     u32 class = get_builtin_class(index, param_types, param_count);
-    Type ret_type = make_type_int();
+    Type ret_type = get_builtin_type(class);
 
     if (class == B_NONE) error(params_start, "incorrect parameters");
     
@@ -653,7 +676,7 @@ static void parse_expr_seq(
     if (expr_count)
         ret_type = expr_types[expr_count - 1];
     else
-        ret_type = make_type_void();
+        ret_type = make_ptype(TYPE_VOID);
 
     *out_ret_type = ret_type;
     *out_expr = make_expr_seq(exprs, expr_count, ret_type.class);
@@ -708,7 +731,7 @@ static void parse_if(
         *out_ret_type = if_type;
     } else {
         *out_expr = make_expr_if(cond_expr, if_expr);
-        *out_ret_type = make_type_void();
+        *out_ret_type = make_ptype(TYPE_VOID);
     }
 
 }
@@ -730,7 +753,7 @@ static void parse_while(
     parse_expr(tokens, context, &while_expr, &while_type);
 
     *out_expr = make_expr_while(cond_expr, while_expr);
-    *out_ret_type = make_type_void();
+    *out_ret_type = make_ptype(TYPE_VOID);
 }
 
 
@@ -821,12 +844,12 @@ static void parse_expr(
 ) {
     switch ((*tokens)->class) {
         case TK_INT:
-            *out_ret_type = make_type_int();
+            *out_ret_type = make_ptype(TYPE_INT);
             *out_expr = make_expr_int_literal(lstr_to_int((*tokens)->val));
             (*tokens)++;
             break;
         case TK_STR:
-            *out_ret_type = make_type_str();
+            *out_ret_type = make_ptype(TYPE_STR);
             *out_expr = make_expr_str_literal((*tokens)->val);
             (*tokens)++;
             break;
@@ -929,11 +952,12 @@ static void parse_global_def(const Token ** tokens, DefList * globals) {
         skip(token, TK_CLOSE);
         init_token = token;
         skip_to_end(&token);
-    } else if (token->class == TK_INT) {
+    } else {
+        if (token->class != TK_INT) error(token, "value expected for global definition");
         type = (Type) { .class = TYPE_INT };
         init_token = token;
         skip(token, TK_INT);
-    } else error(token, "value expected for global definition");
+    }
     
     Def def = (Def) {
         .name = var_name, .offset = defs_size(*globals),
@@ -944,7 +968,10 @@ static void parse_global_def(const Token ** tokens, DefList * globals) {
 }
 
 
-static void parse_tokens(const Token ** tokens, void ** out_globals, Function ** out_main) {
+static void parse_tokens(
+    const Token ** tokens, void ** out_globals, Function ** out_main,
+    bool * out_ignore_ret
+) {
     DefList global_defs = {};
     *out_main = NULL;
 
@@ -961,6 +988,7 @@ static void parse_tokens(const Token ** tokens, void ** out_globals, Function **
                 *fn = parse_function_code(
                     def, global_defs.items, global_defs.len, NULL
                 ); 
+                *out_ignore_ret = (get_ret_type(def->type)->class != TYPE_INT);
                 *(Function **)(global_values + def->offset) = fn;
                 if (lstr_eq(def->name, LSTR("main"))) *out_main = fn;
                 break;
@@ -985,10 +1013,13 @@ static void parse_tokens(const Token ** tokens, void ** out_globals, Function **
 void free_code(void) { afree(code_arena); }
 
 
-void parse_code(char * code, void ** out_globals, Function ** out_main) {
+void parse_code(
+    char * code, void ** out_globals,
+    Function ** out_main, bool * out_ignore_ret
+) {
     parser_arena = arena_init();
     code_arena = arena_init();
     const Token * tokens = tokenize(code, &code_arena);
-    parse_tokens(&tokens, out_globals, out_main);
+    parse_tokens(&tokens, out_globals, out_main, out_ignore_ret);
     afree(parser_arena);
 }

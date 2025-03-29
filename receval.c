@@ -63,13 +63,6 @@ void eval_builtin(
         case B_MUL_VI:
             do_vop(Integer, *);
             break;
-        case B_SEQ:
-            ASSERT(param_count > 0);
-            for (u32 i = 0; i < param_count - 1; i++) {
-                eval_expr(&params[i], globals, locals, ret_ptr);
-            }
-            eval_expr(&params[param_count-1], globals, locals, ret_ptr);
-            break;
         case B_PRINT_I:
             eval_expr(params, globals, locals, ret_ptr);
             printf("%d\n", *((Integer *) ret_ptr));
@@ -199,8 +192,8 @@ void eval_expr(
 }
 
 
-int eval_main(Function * fn, void * globals) {
-    void * ret_ptr = malloc(sizeof(Integer));
+int eval_main(Function * fn, void * globals, bool ignore_ret) {
+    void * ret_ptr = malloc(TYPE_MAX_SIZE);
 
     void * locals = malloc(fn->stack_size);
 
@@ -209,7 +202,8 @@ int eval_main(Function * fn, void * globals) {
     free(locals);
     int ret = *(int *)ret_ptr;
     free(ret_ptr);
-    return ret;
+    if (ignore_ret) return 0;
+    else return ret;
 }
 
 
@@ -231,8 +225,9 @@ int main(int argc, char * argv[]) {
 
     void * globals;
     Function * main_fn;
-    parse_code(code, &globals, &main_fn);
-    int ret = eval_main(main_fn, globals);
-    printf("%d\n",ret);
+    bool ignore_ret;
+    parse_code(code, &globals, &main_fn, &ignore_ret);
+    int ret = eval_main(main_fn, globals, ignore_ret);
     free_code();
+    return ret;
 }
