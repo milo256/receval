@@ -3,6 +3,8 @@
 #include "expr.h"
 #include "eval.h"
 
+#define STACK_SIZE 0x100000
+
 int main(int argc, char * argv[]) {
     if (argc < 2) return fprintf(stderr, "provide file\n"), -1;
     if (argc > 2) return fprintf(stderr, "too many arguments\n"), -1;
@@ -22,7 +24,7 @@ int main(int argc, char * argv[]) {
     
 
     AST ast = parse_code(code);
-    int ret = eval_ast(ast);
+    int ret = eval_ast(ast, STACK_SIZE);
     free_code(ast);
     return ret;
 }

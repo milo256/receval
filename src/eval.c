@@ -141,51 +141,48 @@ static void eval_assign(
 }
 
 
-static void eval_call(
-    OpCall * op, void * globals, void * locals, void * ret_ptr
-) {
-    Function * fn;
-    eval_expr(op->fn, globals, locals, &fn);
+static void eval_call(OpCall * call, void * gp, void * sp, void * ret_ptr) {
+    Function * function;
+    eval_expr(call->fn, gp, sp, &function);
     
-    void * new_locals = malloc(fn->stack_size);
+    void * new_sp = sp - function->stack_size;
 
-    for (u32 i = 0; i < op->param_count; i++) {
-        void * ptr = new_locals + op->param_offsets[i];
-        eval_expr(op->params[i], globals, locals, ptr);
+    for (u32 i = 0; i < call->param_count; i++) {
+        void * ptr = new_sp + call->param_offsets[i];
+        eval_expr(call->params[i], gp, sp, ptr);
     }
-
-    eval_expr(fn->body, globals, new_locals, ret_ptr);
-    free(new_locals);
+    
+    eval_expr(function->body, gp, new_sp, ret_ptr);
 }
 
 
 static void eval_expr(
-    Expr expr, void * globals, void * locals, void * ret_ptr
+    Expr expr, void * gp, void * sp, void * ret_ptr
 ) {
     switch (expr.class) {
         case OP_VAR:
-            eval_var(expr.expr, globals, locals, ret_ptr);
+            eval_var(expr.expr, gp, sp, ret_ptr);
             break;
         case OP_ASSIGN:
-            eval_assign(expr.expr, globals, locals, ret_ptr);
+            eval_assign(expr.expr, gp, sp, ret_ptr);
             break;
         case OP_CALL:
-            eval_call(expr.expr, globals, locals, ret_ptr);
+            eval_call(expr.expr, gp, sp, ret_ptr);
             break;
         case OP_BUILTIN:
-            eval_builtin(expr.expr, globals, locals, ret_ptr);
+            eval_builtin(expr.expr, gp, sp, ret_ptr);
             break; 
         case OP_IF:
-            eval_if(expr.expr, globals, locals);
+            eval_if(expr.expr, gp, sp);
             break;
         case OP_IF_ELSE:
-            eval_if_else(expr.expr, globals, locals, ret_ptr);
+            eval_if_else(expr.expr, gp, sp, ret_ptr);
             break;
         case OP_WHILE:
-            eval_while(expr.expr, globals, locals);
+            eval_while(expr.expr, gp, sp);
             break;
         case OP_SEQ:
-            eval_seq(expr.expr, globals, locals, ret_ptr);
+            eval_seq(expr.expr, gp, sp, ret_ptr);
             break;
         case INT_LITERAL:
             *(Integer *) ret_ptr = *(Integer *) expr.expr;
@@ -203,25 +200,32 @@ static void eval_expr(
 }
 
 
-int eval_ast(AST ast) {
-    void * globals = malloc(ast.globals_size);
-    for (u32 i = 0; i < ast.global_count; i++) {
-        eval_expr(ast.global_decls[i], globals, NULL, DISCARD);
-    }
+int eval_ast(AST ast, u32 stack_size) {
+
+    void *sp, * gp, * stack = malloc(stack_size);
+    if (!stack) PANIC("failed to allocate stack");
+
+    gp = stack + stack_size - ast.globals_size;
+
+    for (u32 i = 0; i < ast.global_count; i++)
+        eval_expr(ast.global_decls[i], gp, NULL, DISCARD);
+
+
+    Function * main_fn = *(Function **) get_var_ptr(ast.main, gp, NULL);
+
+    sp = gp - main_fn->stack_size;
+
+
+    void * ret_ptr; 
     Integer exit_code = 0;
 
-    Function * main_fn = *(Function **) get_var_ptr(ast.main, globals, NULL);
-
-    void * main_locals = malloc(main_fn->stack_size);
-    void * ret_ptr;
     if (ast.main_returns_exit_code)
         ret_ptr = &exit_code;
     else ret_ptr = DISCARD;
 
-    eval_expr(main_fn->body, globals, main_locals, ret_ptr);
+    eval_expr(main_fn->body, gp, sp, ret_ptr);
 
-    free(main_locals);
-    free(globals);
+    free(stack);
 
     return exit_code;
 }
