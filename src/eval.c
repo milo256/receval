@@ -203,22 +203,26 @@ static void eval_expr(
 }
 
 
-static int eval_main(Function * fn, void * globals, bool ignore_ret) {
-    void * ret_ptr = malloc(TYPE_MAX_SIZE);
-
-    void * locals = malloc(fn->stack_size);
-
-    eval_expr(fn->body, globals, locals, ret_ptr);
-    
-    free(locals);
-    int ret = *(int *)ret_ptr;
-    free(ret_ptr);
-    if (ignore_ret) return 0;
-    else return ret;
-}
-
-
 int eval_ast(AST ast) {
-    return eval_main(ast.main_fn, ast.globals, ast.ignore_ret);
+    void * globals = malloc(ast.globals_size);
+    for (u32 i = 0; i < ast.global_count; i++) {
+        eval_expr(ast.global_decls[i], globals, NULL, DISCARD);
+    }
+    Integer exit_code = 0;
+
+    Function * main_fn = *(Function **) get_var_ptr(ast.main, globals, NULL);
+
+    void * main_locals = malloc(main_fn->stack_size);
+    void * ret_ptr;
+    if (ast.main_returns_exit_code)
+        ret_ptr = &exit_code;
+    else ret_ptr = DISCARD;
+
+    eval_expr(main_fn->body, globals, main_locals, ret_ptr);
+
+    free(main_locals);
+    free(globals);
+
+    return exit_code;
 }
 

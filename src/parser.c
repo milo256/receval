@@ -46,6 +46,10 @@ typedef enum {
     FIRST_COMPLEX_TYPE,
     LAST_PRIMITIVE_TYPE = FIRST_COMPLEX_TYPE - 1,
     DEF_COMPLEX_TYPES(TC_ENUM)
+    TYPE_UNKNOWN, /* TYPE_NONE represents an error state. The type was formatted
+                   * wrong or something. TYPE_UNKNOWN is when the type exists
+                   * but hasn't been determined yet. Used for type inference.
+                   */
     NTYPES
 } TypeClass;
 
@@ -76,24 +80,20 @@ typedef struct {
 /* we don't need ident because ident is just offset + location, and location is
  * which array the def is stored in */
 typedef struct {
-    LStr name, * param_names; /* param_names only used for functions */
+    LStr name;
     Type type;
     u32 offset;
-    Token * init; /* location of the initialiser in code. only used for static
-                   * variables since they're initialised prior to execution. */
 } Def;
 
 
-typedef struct {
-    struct {
-        const Def * items;
-        const u32 len;
-    } globals;
-    da(Def) locals;
-} Context;
-
-
 typedef da(Def) DefList;
+
+/* in the global context, locals == globals. is this confusing? maybe.
+ * TODO: think of a better name */
+typedef struct {
+    DefList * globals;
+    DefList * locals;
+} Context;
 
 
 
@@ -113,7 +113,7 @@ static Arena * code_arena;
  * -----------------------------------------------------------------------------
  */
 
-static void error(Token const * tk, char * msg) {
+static void error_internal(Token const * tk, char * msg) {
     fprintf(
         stderr, "Receval: Error on %d:%d: %s\n",
         tk->dbug_line, tk->dbug_column, msg
@@ -145,6 +145,16 @@ static void error(Token const * tk, char * msg) {
     exit(1);
 }
 
+#ifdef NDEBUG
+#define error(tk, msg) error_internal(tk, msg)
+#else
+#define error(tk, msg) do {\
+    fprintf(stderr, "DEBUG: error emitted on %s:%d\n", __FILE__, __LINE__); \
+    error_internal(tk, msg); \
+} while (0)
+
+#endif
+
 
 
 /* Token Functions
@@ -163,7 +173,7 @@ static u32 opposite_delim(u32 class) {
 }
 
 
-/* TODO: doesn't work for assignments not within a function call */
+/* TODO: fix this, it's missing a bunch of cases */
 static void skip_to_end(const Token ** token) {
     const Token * starting_token = *token;
     if (delim_value(*token) < 1) {
@@ -224,6 +234,24 @@ static u32 get_param_count(Type function) {
 }
 
 
+static bool is_type_unknown(Type type) {
+    if (type.class == TYPE_UNKNOWN) return 1;
+    if (type.class == TYPE_FUNCTION) {
+        u32 param_count = get_param_count(type);
+        if (is_type_unknown(*get_ret_type(type))) return 1;
+        for (u32 i = 0; i < param_count; i++)
+            if (is_type_unknown(get_param_types(type)[i]))
+                return 1;
+        return 0;
+    }
+    ASSERT(is_type_primitive(type.class));
+    return 0;
+}
+
+
+/* DANGEROUS: Allocates space for the parameter types, but the caller is
+ * expected to add them.
+ */
 static Type make_type_function(Type ret_type, u32 param_count) {
     FunctionTypeData data = {
         .ret_type = ret_type,
@@ -246,6 +274,9 @@ static Type make_ptype(TypeClass class) {
     ASSERT(is_type_primitive(class));
     return ptype(class);
 }
+
+
+static Type make_type_unknown() { return ptype(TYPE_UNKNOWN); }
 
 
 static bool type_eq(const Type * a, const Type * b) {
@@ -354,9 +385,9 @@ static Expr make_expr_seq(Expr * exprs, u32 expr_count) {
  */
 
 static Ident add_local(Context * ctx, LStr name, Type type) {
-    u32 offset = ctx->locals.len ?
-        ctx->locals.items[ctx->locals.len - 1].offset
-        + sizeof_type(ctx->locals.items[ctx->locals.len - 1].type.class) : 0;
+    u32 offset = ctx->locals->len ?
+        ctx->locals->items[ctx->locals->len - 1].offset
+        + sizeof_type(ctx->locals->items[ctx->locals->len - 1].type.class) : 0;
 
     Ident ident = ident_new(LOCAL, offset);
 
@@ -365,26 +396,8 @@ static Ident add_local(Context * ctx, LStr name, Type type) {
         .offset = var_offset(ident)
     };
 
-    da_append(ctx->locals, def);
+    da_append(*ctx->locals, def);
     return ident;
-}
-
-
-static void create_param_defs(const Def * function_def, Def * buf) {
-    ASSERT_EQ(function_def->type.class, TYPE_FUNCTION);
-    u32 offset = 0,
-        param_count = get_param_count(function_def->type);
-
-    Type * types = get_param_types(function_def->type);
-    LStr * names = function_def->param_names;
-    
-    for (u32 i = 0; i < param_count; i++) {
-        buf[i] = (Def) {
-            .name = names[i], .type = types[i],
-            .offset = offset, .init = NULL,
-        };
-        offset += sizeof_type(types[i].class);
-    } 
 }
 
 
@@ -436,6 +449,7 @@ static Type get_builtin_type(BuiltinClass class) {
 
 
 static u32 match_type_sh(Type type, const char * sh) {
+    ASSERT(type.class != TYPE_UNKNOWN);
     char exsh = type_shorthands[type.class];
     if (*sh != exsh) return 0;
     if (is_type_primitive(type.class)) return 1;
@@ -623,20 +637,22 @@ static bool find_name(LStr name, const Def * defs, u32 defs_len, u32 * out_index
 }
 
 
-static bool parse_var(
-    LStr var_name,
-    Context context,
-    Type * out_type, Ident * out_ident
+/* temporary hack warning: */
+static Def * parse_var(
+    LStr var_name, Context context, Type * out_type, Ident * out_ident
 ) {
     u32 var_index;
-    if (find_name(var_name, context.locals.items, context.locals.len, &var_index)) {
-        *out_type = context.locals.items[var_index].type;
-        *out_ident = ident_new(LOCAL, context.locals.items[var_index].offset);
-    } else if (find_name(var_name, context.globals.items, context.globals.len, &var_index)) {
-        *out_type = context.globals.items[var_index].type;
-        *out_ident = ident_new(GLOBAL, context.globals.items[var_index].offset);
-    } else return false;
-    return true;
+    Def * def = NULL;
+    if (find_name(var_name, context.globals->items, context.globals->len, &var_index)) {
+        def = &context.globals->items[var_index];
+        *out_type = def->type;
+        *out_ident = ident_new(GLOBAL, def->offset);
+    } else if (find_name(var_name, context.locals->items, context.locals->len, &var_index)) {
+        def = &context.locals->items[var_index];
+        *out_type = def->type;
+        *out_ident = ident_new(LOCAL, def->offset);
+    }
+    return def;
 }
 
 
@@ -790,6 +806,12 @@ static void parse_ident(
     if (!parse_var(name, *context, &var_type, &ident))
         error(*tokens, "unknown identifier");
 
+    if (is_type_unknown(var_type))
+        error(*tokens,
+            "unknown type. move this identifier's declaration above its usage "
+            "or add a type annotation"
+        );
+
     Expr var_expr = make_expr_var(ident, var_type.class);
 
     bool is_call = (*tokens + 1)->class == TK_OPEN;
@@ -829,10 +851,12 @@ static void parse_expr_assign(
     Type var_type;
     Ident var_ident;
 
-    const bool var_exists = parse_var(var_name, *context, &var_type, &var_ident);
+    Def * var_def = parse_var(var_name, *context, &var_type, &var_ident);
 
-    if (var_exists) {
-        if (!type_eq(&var_type, &val_type))
+    if (var_def) {
+        if (var_type.class == TYPE_UNKNOWN)
+            var_def->type = val_type;
+        else if (!type_eq(&var_type, &val_type))
             error(var_token, "mismatched types");
     } else {
         if (is_builtin(var_name, NULL))
@@ -846,9 +870,11 @@ static void parse_expr_assign(
     *out_ret_type = var_type;
 }
 
-/* so we know how much space to allocate for the params, we parse them twice.
- * this function will error on invalid param list, so no need to check that
- * again */
+
+/* to know how much space to allocate for the params, we parse them twice.
+ * This function will error on invalid param list, so no need to check that
+ * again
+ */
 static u32 parser_count_params(const Token * open) {
     const Token * token = open;
     skip_expect(token, TK_OPEN, "expected parameter list `(...)`");
@@ -879,13 +905,16 @@ static void parse_expr_function_lit(
 
     u32 param_count = parser_count_params(*tokens);
 
-    Context ctx = { context->globals, da_new(Def, param_count) };
+    DefList locals = da_new(Def, param_count);
+    Context ctx = { context->globals, &locals };
+    
+    Type type = make_type_function(make_ptype(TYPE_NONE), param_count);
 
     skip(*tokens, TK_OPEN);
     for (u32 i = 0; i < param_count; i++) {
-        Type type = parse_type(tokens);
-        skip(*tokens, TK_IDENT);
-        add_local(&ctx, (*tokens)->val, type);
+        Type param_type = parse_type(tokens);
+        get_param_types(type)[i] = param_type;
+        add_local(&ctx, (*tokens)->val, param_type);
         skip(*tokens, TK_IDENT);
     }
     skip(*tokens, TK_CLOSE);
@@ -898,12 +927,14 @@ static void parse_expr_function_lit(
     if (!type_eq(&fn_ret_type, &expected_fn_ret_type))
         error(ret_type_token, "mismatched return type");
 
-    fn.stack_size = defs_size(ctx.locals);
+    *get_ret_type(type) = fn_ret_type;
 
-    da_dealloc(ctx.locals);
+    fn.stack_size = defs_size(locals);
+
+    da_dealloc(locals);
 
     *out_expr = make_expr_function_literal(fn);
-    *out_ret_type = make_type_function(fn_ret_type, param_count);
+    *out_ret_type = type;
 }
 
 
@@ -939,129 +970,114 @@ static void parse_expr(
 }
 
 
-static Function parse_function_code(
-    const Def * def, const Def * global_defs, u32 globals_len,
-    Type * out_type
-) {
-    Function fn;
+/* Tries to get the type of an expression without fully parsing the expression.
+ * If there's not enough context, returns TYPE_UNKNOWN. Either way, does its
+ * best to move *tokens to the first token after the end of the expression.
+ */
+static Type predef_parse_expr_type(const Token ** tokens) {
+    switch ((*tokens)->class) {
+        case TK_INT:
+            skip(*tokens, TK_INT);
+            return make_ptype(TYPE_INT);
+        case TK_STR:
+            skip(*tokens, TK_STR);
+            return make_ptype(TYPE_STR);
+        case TK_FUNCTION:
+            {
+                Type type, ret_type;
+                skip(*tokens, TK_FUNCTION);
 
-    u32 param_count = get_param_count(def->type);
+                if ((*tokens)->class == TK_ARROW) {
+                    skip(*tokens, TK_ARROW);
+                    ret_type = parse_type(tokens);
+                    if (ret_type.class == TYPE_NONE)
+                        error(*tokens, "expected type");
+                } else ret_type = make_type_unknown();
 
-    Context ctx = {
-        { global_defs, globals_len },
-        da_new(Def, param_count),
-    };
+                u32 param_count = parser_count_params(*tokens);
 
-    create_param_defs(def, ctx.locals.items);
-    ctx.locals.len = param_count;
+                type = make_type_function(ret_type, param_count); 
 
-    const Token * token = def->init;
-    Type ret_type;
-    parse_expr(
-        &token, &ctx,
-        &fn.body, &ret_type
-    );
+                skip(*tokens, TK_OPEN);
+                for (u32 i = 0; i < param_count; i++) {
+                    get_param_types(type)[i] = parse_type(tokens);
+                    skip(*tokens, TK_IDENT);
+                }
+                skip(*tokens, TK_CLOSE);
 
-    Type * expected_ret_type = get_ret_type(def->type);
-    if (!type_eq(&ret_type, expected_ret_type)) error(def->init, "mismatched return types");
-
-    fn.stack_size = defs_size(ctx.locals);
-    if (out_type) *out_type = def->type;
-
-    da_dealloc(ctx.locals);
-    return fn;
-}
-
-
-
-
-static void parse_global_def(const Token ** tokens, DefList * globals) {
-    const Token * token = *tokens;
-    if (token->class != TK_ASSIGN) error(token, "expected global variable definition");
-    token++;
-    if (token->class != TK_IDENT) error(token, "expected identifier");
-
-    LStr var_name = token->val;
-    Type type;
-
-    LStr * param_names = NULL;
-    
-    const Token * init_token;
-    token++;
-    if (token->class == TK_FUNCTION) {
-        skip(token, TK_FUNCTION);
-        skip_expect(token, TK_ARROW, "expected return type `-> <type>`");
-
-        const Token * ret_type_token = token;
-        Type ret_type = parse_type(&token);
-        if (ret_type.class == TYPE_NONE) error(ret_type_token, "expected type1");
-
-        u32 param_count = parser_count_params(token);
-        skip(token, TK_OPEN);
-        
-        param_names = aalloc(code_arena, sizeof(LStr) * param_count);
-
-        type = make_type_function(ret_type, param_count); 
-        for (u32 i = 0; i < param_count; i++) {
-            get_param_types(type)[i] = parse_type(&token);
-            param_names[i] = token++->val;
-        }
-        skip(token, TK_CLOSE);
-        init_token = token;
-        skip_to_end(&token);
-    } else {
-        if (token->class != TK_INT) error(token, "value expected for global definition");
-        type = (Type) { .class = TYPE_INT };
-        init_token = token;
-        skip(token, TK_INT);
+                skip_to_end(tokens);
+                return type;
+            }
+        default:
+            PANIC("temporary");
+            skip_to_end(tokens);
+            return make_type_unknown();
     }
-    
-    Def def = (Def) {
-        .name = var_name, .offset = defs_size(*globals),
-        .type = type, .init = (Token *) init_token, .param_names = param_names
-    };
-    da_append(*globals, def);
-    *tokens = token;
 }
 
 
-static void parse_tokens(
-    const Token ** tokens, void ** out_globals, Function ** out_main,
-    bool * out_ignore_ret
-) {
-    DefList global_defs = {};
-    *out_main = NULL;
+static void predef_parse_global_decl(const Token ** tokens, Context * context) {
+    skip_expect(*tokens, TK_ASSIGN, "expected declaration");
 
-    while((*tokens)->class != TK_EOF)
-        parse_global_def(tokens, &global_defs);
+    if ((*tokens)->class != TK_IDENT)
+        error(*tokens, "expected identifier");
 
-    void * global_values = aalloc(code_arena, defs_size(global_defs));
+    const Token * var_token = *tokens;
+    const LStr var_name = var_token->val;
 
-    for (u32 i = 0; i < global_defs.len; i++) {
-        Def * def = &global_defs.items[i];
-        switch (def->type.class) {
-            case TYPE_FUNCTION: {
-                Function * fn = aalloc(code_arena, sizeof(Function));
-                *fn = parse_function_code(
-                    def, global_defs.items, global_defs.len, NULL
-                ); 
-                *out_ignore_ret = (get_ret_type(def->type)->class != TYPE_INT);
-                *(Function **)(global_values + def->offset) = fn;
-                if (lstr_eq(def->name, LSTR("main"))) *out_main = fn;
-                break;
-            } case TYPE_INT:
-                ASSERT_EQ(((Token *)def->init)->class, TK_INT);
-                *(Integer *)(global_values + def->offset) = lstr_to_int(((Token*)def->init)->val);
-                break;
-            default: PANIC();
-        }
+    skip(*tokens, TK_IDENT);
+
+    Type type = predef_parse_expr_type(tokens);
+    add_local(context, var_name, type);
+}
+
+
+static Context predefine_globals(const Token * tokens) {
+    DefList * globals = aalloc(parser_arena, sizeof(DefList));
+    *globals = (DefList) {};
+    Context ctx = { .globals = globals, .locals = globals };
+
+    while (tokens->class != TK_EOF)
+        predef_parse_global_decl(&tokens, &ctx);
+    return ctx;
+}
+
+
+static AST parse_tokens(const Token * tokens) {
+    Context ctx = predefine_globals(tokens);
+
+    AST ast = { .arena = arena_init() };
+
+    /* global variable pointer to stack variable. what could go wrong */
+    code_arena = &ast.arena;
+
+    ast.global_count = ctx.globals->len;
+    ast.global_decls = aalloc(code_arena, ast.global_count * sizeof(Expr));
+
+    for (u32 i = 0; i < ast.global_count; i++) {
+        Type type;
+        parse_expr_assign(&tokens, &ctx, &ast.global_decls[i], &type);
     }
-    *out_globals = global_values;
 
-    da_dealloc(global_defs);
+    ast.globals_size = defs_size(*ctx.globals);
+
+    Type main_type;
+    Ident main_ident;
+
+    if (!parse_var(LSTR("main"), ctx, &main_type, &main_ident))
+        PANIC("no main function");
+
+    if (main_type.class != TYPE_FUNCTION)
+        PANIC("main isn't a function");
+
+    ast.main_returns_exit_code = (get_ret_type(main_type)->class == TYPE_INT);
+
+    ast.main = main_ident;
+
+    free(ctx.globals->items);
+
+    return ast;
 }
-
-
 
 /* API Functions
  * -----------------------------------------------------------------------------
@@ -1071,13 +1087,12 @@ void free_code(AST ast) { afree(ast.arena); }
 
 
 AST parse_code(const char * code) {
-    AST ast = { .arena = arena_init() };
     parser_arena = malloc(sizeof(Arena));
     *parser_arena = arena_init();
-    code_arena = &ast.arena;
 
-    const Token * tokens = tokenize(code, code_arena);
-    parse_tokens(&tokens, &ast.globals, &ast.main_fn, &ast.ignore_ret);
+    const Token * tokens = tokenize(code, parser_arena);
+    AST ast = parse_tokens(tokens);
+    //parse_tokens(&tokens, &ast.globals, &ast.main_fn, &ast.ignore_ret);
 
     afree(*parser_arena);
     free(parser_arena);
