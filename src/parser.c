@@ -77,12 +77,10 @@ typedef struct {
  * -----------------------------------------------------------------------------
  */
 
-/* we don't need ident because ident is just offset + location, and location is
- * which array the def is stored in */
 typedef struct {
     LStr name;
     Type type;
-    u32 offset;
+    Ident ident;
 } Def;
 
 
@@ -93,6 +91,7 @@ typedef da(Def) DefList;
 typedef struct {
     DefList * globals;
     DefList * locals;
+    u32 next_index, next_offset;
 } Context;
 
 
@@ -210,6 +209,7 @@ static bool is_type_primitive(TypeClass class) {
 
 static u32 sizeof_type(int type_class) {
     ASSERT(type_class != TYPE_NONE);
+    ASSERT(type_class != TYPE_UNKNOWN);
     u32 size = type_sizes[type_class];
     ASSERT(size <= TYPE_MAX_SIZE);
     return size;
@@ -234,13 +234,13 @@ static u32 get_param_count(Type function) {
 }
 
 
-static bool is_type_unknown(Type type) {
+static bool is_type_incomplete(Type type) {
     if (type.class == TYPE_UNKNOWN) return 1;
     if (type.class == TYPE_FUNCTION) {
         u32 param_count = get_param_count(type);
-        if (is_type_unknown(*get_ret_type(type))) return 1;
+        if (is_type_incomplete(*get_ret_type(type))) return 1;
         for (u32 i = 0; i < param_count; i++)
-            if (is_type_unknown(get_param_types(type)[i]))
+            if (is_type_incomplete(get_param_types(type)[i]))
                 return 1;
         return 0;
     }
@@ -347,12 +347,16 @@ static Expr make_expr_call(Expr fn, OpCall ** op_ptr) {
 
 
 static Expr make_expr_var(Ident ident, TypeClass type_class) {
+    ASSERT(type_class != TYPE_NONE);
+    ASSERT(type_class != TYPE_UNKNOWN);
     OpVar * _;
     return MAKE_EXPR(OP_VAR, _, OpVar, { .ident = ident, .size = sizeof_type(type_class) });
 }
 
 
 static Expr make_expr_assignment(Expr val, Ident ident, TypeClass type_class) {
+    ASSERT(type_class != TYPE_NONE);
+    ASSERT(type_class != TYPE_UNKNOWN);
     OpAssign * _; return MAKE_EXPR
         (OP_ASSIGN, _, OpAssign, { ident, val, sizeof_type(type_class)});
 }
@@ -384,25 +388,30 @@ static Expr make_expr_seq(Expr * exprs, u32 expr_count) {
  * -----------------------------------------------------------------------------
  */
 
-static Ident add_local(Context * ctx, LStr name, Type type) {
-    u32 offset = ctx->locals->len ?
-        ctx->locals->items[ctx->locals->len - 1].offset
-        + sizeof_type(ctx->locals->items[ctx->locals->len - 1].type.class) : 0;
+static Ident add_var(Context * ctx, LStr name, Type type) {
+    u32 offset = ctx->next_offset, index = ctx->next_index;
+    VarLocation loc = (ctx->locals == ctx->globals)? GLOBAL : LOCAL;
 
-    Ident ident = ident_new(LOCAL, offset);
+    Ident ident = ident_new(loc, offset);
 
-    Def def = {
-        .name = name, .type = type,
-        .offset = var_offset(ident)
-    };
+    Def def = { .name = name, .type = type, .ident = ident };
 
-    da_append(*ctx->locals, def);
+    if (index >= ctx->locals->len) {
+        ASSERT_EQ(index, ctx->locals->len);
+        da_append(*ctx->locals, def);
+    } else {
+        ASSERT_EQ(ctx->locals->items[index].ident, def.ident);
+        ctx->locals->items[index] = def;
+    }
+
+    ctx->next_index++;
+    ctx->next_offset = offset + sizeof_type(type.class);
     return ident;
 }
 
 
-#define defs_size(list) \
-        ((list).len ? (list).items[(list).len - 1].offset + sizeof_type((list).items[(list).len - 1].type.class) : 0)
+#define vars_size(ctx) \
+    ((ctx).next_offset)
 
 
 
@@ -638,21 +647,13 @@ static bool find_name(LStr name, const Def * defs, u32 defs_len, u32 * out_index
 
 
 /* temporary hack warning: */
-static Def * parse_var(
-    LStr var_name, Context context, Type * out_type, Ident * out_ident
-) {
+static Def * get_def(LStr name, Context context) {
     u32 var_index;
-    Def * def = NULL;
-    if (find_name(var_name, context.globals->items, context.globals->len, &var_index)) {
-        def = &context.globals->items[var_index];
-        *out_type = def->type;
-        *out_ident = ident_new(GLOBAL, def->offset);
-    } else if (find_name(var_name, context.locals->items, context.locals->len, &var_index)) {
-        def = &context.locals->items[var_index];
-        *out_type = def->type;
-        *out_ident = ident_new(LOCAL, def->offset);
-    }
-    return def;
+    if (find_name(name, context.globals->items, context.globals->len, &var_index))
+        return &context.globals->items[var_index];
+    else if (find_name(name, context.locals->items, context.locals->len, &var_index))
+        return &context.locals->items[var_index];
+    else return NULL;
 }
 
 
@@ -800,31 +801,29 @@ static void parse_ident(
     }
 
 
-    Type var_type;
-    Ident ident;
+    Def * def = get_def(name, *context);
 
-    if (!parse_var(name, *context, &var_type, &ident))
-        error(*tokens, "unknown identifier");
+    if (!def)
+        error(*tokens, "undeclared identifier");
 
-    if (is_type_unknown(var_type))
+    if (is_type_incomplete(def->type))
         error(*tokens,
-            "unknown type. move this identifier's declaration above its usage "
-            "or add a type annotation"
-        );
+            "incomplete type. move this identifier's declaration above its "
+            "usage or add a type annotation");
 
-    Expr var_expr = make_expr_var(ident, var_type.class);
+    Expr var_expr = make_expr_var(def->ident, def->type.class);
 
     bool is_call = (*tokens + 1)->class == TK_OPEN;
 
     if (is_call) {
-        if (var_type.class != TYPE_FUNCTION) error(*tokens, "not a function");
+        if (def->type.class != TYPE_FUNCTION) error(*tokens, "not a function");
 
         parse_expr_call(
-            tokens, context, var_expr, var_type, out_expr, out_ret_type
+            tokens, context, var_expr, def->type, out_expr, out_ret_type
         );
     } else {
         *out_expr = var_expr;
-        *out_ret_type = var_type;
+        *out_ret_type = def->type;
         skip(*tokens, TK_IDENT);
     }
 }
@@ -848,22 +847,27 @@ static void parse_expr_assign(
     Type val_type;
     parse_expr(tokens, context, &val, &val_type);
 
+
+    Def * var_def = get_def(var_name, *context);
+    
     Type var_type;
     Ident var_ident;
 
-    Def * var_def = parse_var(var_name, *context, &var_type, &var_ident);
-
     if (var_def) {
-        if (var_type.class == TYPE_UNKNOWN)
+        var_type = var_def->type;
+        var_ident = var_def->ident;
+        
+        if (is_type_incomplete(var_type))
             var_def->type = val_type;
-        else if (!type_eq(&var_type, &val_type))
+
+        if (!type_eq(&var_type, &val_type))
             error(var_token, "mismatched types");
     } else {
         if (is_builtin(var_name, NULL))
             error(var_token, "not a valid identifier");
 
         var_type = val_type;
-        var_ident = add_local(context, var_name, var_type);
+        var_ident = add_var(context, var_name, var_type);
     }
 
     *out_expr = make_expr_assignment(val, var_ident, var_type.class);
@@ -906,7 +910,7 @@ static void parse_expr_function_lit(
     u32 param_count = parser_count_params(*tokens);
 
     DefList locals = da_new(Def, param_count);
-    Context ctx = { context->globals, &locals };
+    Context ctx = { .globals = context->globals, .locals = &locals };
     
     Type type = make_type_function(make_ptype(TYPE_NONE), param_count);
 
@@ -914,7 +918,7 @@ static void parse_expr_function_lit(
     for (u32 i = 0; i < param_count; i++) {
         Type param_type = parse_type(tokens);
         get_param_types(type)[i] = param_type;
-        add_local(&ctx, (*tokens)->val, param_type);
+        add_var(&ctx, (*tokens)->val, param_type);
         skip(*tokens, TK_IDENT);
     }
     skip(*tokens, TK_CLOSE);
@@ -929,7 +933,7 @@ static void parse_expr_function_lit(
 
     *get_ret_type(type) = fn_ret_type;
 
-    fn.stack_size = defs_size(locals);
+    fn.stack_size = vars_size(ctx);
 
     da_dealloc(locals);
 
@@ -1009,7 +1013,6 @@ static Type predef_parse_expr_type(const Token ** tokens) {
                 return type;
             }
         default:
-            PANIC("temporary");
             skip_to_end(tokens);
             return make_type_unknown();
     }
@@ -1027,8 +1030,14 @@ static void predef_parse_global_decl(const Token ** tokens, Context * context) {
 
     skip(*tokens, TK_IDENT);
 
+    const Token * initializer_token = *tokens;
+
     Type type = predef_parse_expr_type(tokens);
-    add_local(context, var_name, type);
+
+    if (type.class == TYPE_UNKNOWN || type.class == TYPE_NONE)
+        error(initializer_token, "can't determine type");
+
+    add_var(context, var_name, type);
 }
 
 
@@ -1039,6 +1048,7 @@ static Context predefine_globals(const Token * tokens) {
 
     while (tokens->class != TK_EOF)
         predef_parse_global_decl(&tokens, &ctx);
+
     return ctx;
 }
 
@@ -1059,20 +1069,19 @@ static AST parse_tokens(const Token * tokens) {
         parse_expr_assign(&tokens, &ctx, &ast.global_decls[i], &type);
     }
 
-    ast.globals_size = defs_size(*ctx.globals);
+    ast.globals_size = vars_size(ctx);
 
-    Type main_type;
-    Ident main_ident;
+    Def * main_def;
 
-    if (!parse_var(LSTR("main"), ctx, &main_type, &main_ident))
+    if (!(main_def = get_def(LSTR("main"), ctx)))
         PANIC("no main function");
 
-    if (main_type.class != TYPE_FUNCTION)
+    if (main_def->type.class != TYPE_FUNCTION)
         PANIC("main isn't a function");
 
-    ast.main_returns_exit_code = (get_ret_type(main_type)->class == TYPE_INT);
+    ast.main_returns_exit_code = (get_ret_type(main_def->type)->class == TYPE_INT);
 
-    ast.main = main_ident;
+    ast.main = main_def->ident;
 
     free(ctx.globals->items);
 
