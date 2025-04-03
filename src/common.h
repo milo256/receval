@@ -8,32 +8,37 @@
 #include <string.h>
 
 
-typedef uint32_t u32;
-typedef int32_t i32;
 typedef uint8_t u8;
+typedef uint16_t u16;
+typedef uint32_t u32;
+typedef uint64_t u64;
+
 typedef int8_t i8;
+typedef int16_t i16;
+typedef int32_t i32;
+typedef int64_t i64;
+
 
 
 #define TYPE_MAX_SIZE (2 * sizeof(void *))
-
 
 
 /* Common Macros
  * -----------------------------------------------------------------------------
  */
 
-#define MAX(A,B) ((A > B) ? A : B)
+#define max(A,B) (((A) > (B)) ? (A) : (B))
 
-#define MIN(A,B) ((A > B) ? B : A)
+#define min(A,B) (((A) < (B)) ? (A) : (B))
 
-#define ARRLEN(A) (sizeof(A)/sizeof(A[0]))
+#define arrlen(A) (sizeof(A)/sizeof(A[0]))
 
 #ifdef NDEBUG
 #define ASSERT(A) ((void) 0)
 #define ASSERT_EQ(A, B) ((void) 0)
 #else
 
-#define ASSERT_EQ(A, B) if ((A) != (B)) { \
+#define assert_eq(A, B) if ((A) != (B)) { \
     fprintf( \
         stderr, "Assertion failed on %s:%d: %s (%ld) != %s (%ld)\n", \
         __FILE__, __LINE__, #A, ((long) A), #B, ((long) B) \
@@ -42,7 +47,7 @@ typedef int8_t i8;
 }
 
 
-#define ASSERT(A) do{ if (!(A)) {                                              \
+#define assert(A) do{ if (!(A)) {                                              \
     fprintf(stderr, "Assertion failed on %s:%d: %s\n", __FILE__, __LINE__, #A);\
     exit(-1);                                                                  \
 } } while(0)
@@ -50,7 +55,7 @@ typedef int8_t i8;
 #endif
 
 
-#define PANIC(...) do { \
+#define panic(...) do { \
     fprintf(stderr, "Panic! %s:%d", __FILE__, __LINE__); \
     fprintf(stderr," " __VA_ARGS__); \
     fprintf(stderr,"\n"); \
@@ -58,23 +63,7 @@ typedef int8_t i8;
 } while(0)
 
 #define unreachable \
-    PANIC("unreachable");
-
-
-
-/* String Slices
- * -----------------------------------------------------------------------------
- */
-
-typedef struct {
-    char * chars;
-    u32 len;
-} LStr;
-
-#define LSTR(cstr) (LStr) { .chars = cstr, .len = strlen(cstr) }
-
-bool lstr_str_eq(const LStr a, const char * b);
-bool lstr_eq(const LStr a, const LStr b);
+    panic("unreachable");
 
 
 
@@ -89,6 +78,63 @@ typedef struct {
 Arena arena_init(void);
 void * aalloc(Arena *, u32);
 void afree(Arena);
+
+
+
+/* Iterators
+ * -----------------------------------------------------------------------------
+ */
+
+#define iterdef(name, state_t, item_t) \
+    typedef item_t name##_item_t; \
+    typedef state_t name##_state_t; \
+    bool name
+
+
+#define iterate(item_var, iterator, ...) \
+    for(bool i__latch = 1; i__latch;) \
+    for(iterator##_item_t item_var; i__latch; i__latch = 0) \
+    for(iterator##_state_t i__iterstate = {}; iterator(&i__iterstate, &item_var, __VA_ARGS__);)
+
+
+#define iternumerate(index_var, item_var, iterator, ...) \
+    for(bool ms__latch = 1; ms__latch;) \
+    for(size_t index_var; ms__latch;) \
+    for(iterator##_item_t item_var; ms__latch; ms__latch = 0) \
+    for(iterator##_state_t ms__iterstate = {}; index_var++, iterator(&ms__iterstate, &item_var, __VA_ARGS__);)
+
+
+
+/* String Slices
+ * -----------------------------------------------------------------------------
+ */
+
+typedef struct {
+    char * sptr;
+    char * eptr;
+} slice_t;
+
+
+enum {
+    NOT_CODEPOINT = -1
+};
+
+
+slice_t slice(char * str);
+
+size_t slicelen(slice_t slice);
+
+size_t slice_to_nullt(char * buf, slice_t slice);
+
+int codepoint_len(char sbyte);
+
+bool slice_eq(slice_t a, slice_t b);
+
+bool slice_str_eq(slice_t a, char * b);
+
+iterdef(i_split, size_t, slice_t) (size_t * sidx, slice_t * item, slice_t str, char sep);
+
+iterdef(i_codepoints, size_t, slice_t) (size_t * sidx, slice_t * item, slice_t str);
 
 
 
@@ -109,12 +155,11 @@ void afree(Arena);
 
 
 #define da_next(da) (\
-        ( (da).len < (da).cap )?: \
-            ( (da).items = realloc( \
-                (da).items, sizeof((da).items[0]) * ((da).cap? (da).cap *= 2 : ((da).cap = 1)) \
-            ) ), \
-        &(da).items[(da).len++] \
-    ) \
+    ( (da).len < (da).cap )?: \
+        (void) ( (da).items = realloc( \
+            (da).items, sizeof((da).items[0]) * ((da).cap? (da).cap *= 2 : ((da).cap = 1)) \
+        ) ), \
+    &(da).items[(da).len++] ) \
 
 
 #define da_foreach(item_var, da) \

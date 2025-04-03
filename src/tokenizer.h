@@ -25,7 +25,7 @@ typedef enum {
 
 typedef struct {
     TkClass class;
-    LStr val;
+    slice_t val;
     u32 dbug_line;
     u32 dbug_column;
 } Token;

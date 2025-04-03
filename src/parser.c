@@ -3,6 +3,7 @@
 #include "common.h"
 #include "expr.h"
 #include "tokenizer.h"
+#include "types.h"
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -18,67 +19,13 @@
 #define MAX_COLS 40
 
 
-/* Receval Types
- * -----------------------------------------------------------------------------
- */
-
-#define DEF_PRIMITIVE_TYPES(f) \
-/*  | enum name | str name | shorthand | size */\
-    f(TYPE_VOID,  "void",    'n',        0) \
-    f(TYPE_INT,   "int",     'i',        sizeof(Integer)) \
-    f(TYPE_STR,   "str",     's',        sizeof(String))
-
-#define DEF_COMPLEX_TYPES(f) \
-/*  | enum name      | str name | shorthand | size */\
-    f(TYPE_FUNCTION,   NULL,      'p',        sizeof(int *))
-
-#define DEF_TYPES(f) \
-    DEF_PRIMITIVE_TYPES(f) DEF_COMPLEX_TYPES(f)
-
-#define TC_ENUM(en, sn, sh, sz) en,
-#define TYPE_SIZE_TABLE(en, sn, sh, sz) [en] = sz,
-#define TYPE_NAME_TABLE(en, sn, sh, sz) [en] = sn,
-#define TYPE_SH_TABLE(en, sn, sh, sz) [en] = sh,
-
-typedef enum {
-    TYPE_NONE,
-    DEF_PRIMITIVE_TYPES(TC_ENUM)
-    FIRST_COMPLEX_TYPE,
-    LAST_PRIMITIVE_TYPE = FIRST_COMPLEX_TYPE - 1,
-    DEF_COMPLEX_TYPES(TC_ENUM)
-    TYPE_UNKNOWN, /* TYPE_NONE represents an error state. The type was formatted
-                   * wrong or something. TYPE_UNKNOWN is when the type exists
-                   * but hasn't been determined yet. Used for type inference.
-                   */
-    NTYPES
-} TypeClass;
-
-
-static u32 type_sizes[] = { DEF_TYPES(TYPE_SIZE_TABLE) };
-static char * type_names[] = { DEF_TYPES(TYPE_NAME_TABLE) };
-static char type_shorthands[] = { DEF_TYPES(TYPE_SH_TABLE) };
-
-
-typedef struct Type {
-    TypeClass class;
-    void * data;
-} Type;
-
-
-typedef struct {
-    Type ret_type;
-    u32 param_count;    
-    /* and then args array is stored immediately after this in memory (trust) */
-}  FunctionTypeData;
-
-
 
 /* Definition Types
  * -----------------------------------------------------------------------------
  */
 
 typedef struct {
-    LStr name;
+    slice_t name;
     Type type;
     Ident ident;
 } Def;
@@ -117,19 +64,19 @@ static void error_internal(Token const * tk, char * msg) {
         stderr, "Receval: Error on %d:%d: %s\n",
         tk->dbug_line, tk->dbug_column, msg
     );
-    char * at = tk->val.chars;
+    char * at = tk->val.sptr;
     char * line_start = at - tk->dbug_column + 1;
     char * line_end = strchr(at, '\n');
 
-    char * str_start = MAX(line_start, line_end - MAX_COLS);
+    char * str_start = max(line_start, line_end - MAX_COLS);
     if ((at - 4) < str_start)
-        str_start = MAX(at - 4, line_start);
-    char * str_end = MIN(line_start + MAX_COLS, line_end);
+        str_start = max(at - 4, line_start);
+    char * str_end = min(line_start + MAX_COLS, line_end);
 
     char buf[MAX_COLS + 1];
     u32 len = str_end - str_start;
     u32 error_pos = at - str_start;
-    u32 error_len = MAX(1, MIN(tk->val.len, str_end - at));
+    u32 error_len = max(1, min(slicelen(tk->val), (size_t) (str_end - at)));
     strncpy(buf, str_start, len);
 
     buf[len] = '\0';
@@ -188,10 +135,10 @@ static void skip_to_end(const Token ** token) {
 }
 
 
-static TypeClass lstr_to_type_class(LStr str) {
-    for (u32 i = 0; i < ARRLEN(type_names); i++) {
+static TypeClass str_to_type_class(slice_t str) {
+    for (u32 i = 0; i < arrlen(type_names); i++) {
         if (!type_names[i]) continue;
-        if (lstr_str_eq(str, type_names[i])) return i;
+        if (slice_str_eq(str, type_names[i])) return i;
     }
     return TYPE_NONE;
 }
@@ -208,28 +155,28 @@ static bool is_type_primitive(TypeClass class) {
 
 
 static u32 sizeof_type(int type_class) {
-    ASSERT(type_class != TYPE_NONE);
-    ASSERT(type_class != TYPE_UNKNOWN);
+    assert(type_class != TYPE_NONE);
+    assert(type_class != TYPE_UNKNOWN);
     u32 size = type_sizes[type_class];
-    ASSERT(size <= TYPE_MAX_SIZE);
+    assert(size <= TYPE_MAX_SIZE);
     return size;
 }
 
 
 static Type * get_ret_type(Type function) {
-    ASSERT_EQ(function.class, TYPE_FUNCTION);
+    assert_eq(function.class, TYPE_FUNCTION);
     return &((FunctionTypeData *) function.data)->ret_type;
 }
 
 
 static Type * get_param_types(Type function) {
-    ASSERT_EQ(function.class, TYPE_FUNCTION);
+    assert_eq(function.class, TYPE_FUNCTION);
     return (Type *) ((void *) function.data + sizeof(FunctionTypeData));
 }
 
 
 static u32 get_param_count(Type function) {
-    ASSERT_EQ(function.class, TYPE_FUNCTION);
+    assert_eq(function.class, TYPE_FUNCTION);
     return ((FunctionTypeData *) function.data)->param_count;
 }
 
@@ -244,7 +191,7 @@ static bool is_type_incomplete(Type type) {
                 return 1;
         return 0;
     }
-    ASSERT(is_type_primitive(type.class));
+    assert(is_type_primitive(type.class));
     return 0;
 }
 
@@ -271,7 +218,7 @@ static Type make_type_function(Type ret_type, u32 param_count) {
 #define ptype(c) ((Type) { .class = (c) })
 
 static Type make_ptype(TypeClass class) {
-    ASSERT(is_type_primitive(class));
+    assert(is_type_primitive(class));
     return ptype(class);
 }
 
@@ -327,9 +274,9 @@ static Expr make_expr_int_literal(Integer val) {
 }
 
 
-static Expr make_expr_str_literal(LStr from) {
-    String str = { .chars = aalloc(code_arena, from.len), .len = from.len };
-    memcpy(str.chars, from.chars, from.len);
+static Expr make_expr_str_literal(slice_t from) {
+    String str = { .chars = aalloc(code_arena, slicelen(from)), .len = slicelen(from) };
+    memcpy(str.chars, from.sptr, slicelen(from));
     String * _;
     return MAKE_EXPR(STR_LITERAL, _, String, str);
 }
@@ -347,16 +294,16 @@ static Expr make_expr_call(Expr fn, OpCall ** op_ptr) {
 
 
 static Expr make_expr_var(Ident ident, TypeClass type_class) {
-    ASSERT(type_class != TYPE_NONE);
-    ASSERT(type_class != TYPE_UNKNOWN);
+    assert(type_class != TYPE_NONE);
+    assert(type_class != TYPE_UNKNOWN);
     OpVar * _;
     return MAKE_EXPR(OP_VAR, _, OpVar, { .ident = ident, .size = sizeof_type(type_class) });
 }
 
 
 static Expr make_expr_assignment(Expr val, Ident ident, TypeClass type_class) {
-    ASSERT(type_class != TYPE_NONE);
-    ASSERT(type_class != TYPE_UNKNOWN);
+    assert(type_class != TYPE_NONE);
+    assert(type_class != TYPE_UNKNOWN);
     OpAssign * _; return MAKE_EXPR
         (OP_ASSIGN, _, OpAssign, { ident, val, sizeof_type(type_class)});
 }
@@ -388,7 +335,7 @@ static Expr make_expr_seq(Expr * exprs, u32 expr_count) {
  * -----------------------------------------------------------------------------
  */
 
-static Ident add_var(Context * ctx, LStr name, Type type) {
+static Ident add_var(Context * ctx, slice_t name, Type type) {
     u32 offset = ctx->next_offset, index = ctx->next_index;
     VarLocation loc = (ctx->locals == ctx->globals)? GLOBAL : LOCAL;
 
@@ -397,10 +344,10 @@ static Ident add_var(Context * ctx, LStr name, Type type) {
     Def def = { .name = name, .type = type, .ident = ident };
 
     if (index >= ctx->locals->len) {
-        ASSERT_EQ(index, ctx->locals->len);
+        assert_eq(index, ctx->locals->len);
         da_append(*ctx->locals, def);
     } else {
-        ASSERT_EQ(ctx->locals->items[index].ident, def.ident);
+        assert_eq(ctx->locals->items[index].ident, def.ident);
         ctx->locals->items[index] = def;
     }
 
@@ -450,15 +397,15 @@ static const Type builtin_types[] = {
 
 
 static Type get_builtin_type(BuiltinClass class) {
-    ASSERT(class < ARRLEN(builtin_types));
+    assert(class < arrlen(builtin_types));
     Type type = builtin_types[class];
-    ASSERT(type.class != TYPE_NONE);
+    assert(type.class != TYPE_NONE);
     return type;
 }
 
 
 static u32 match_type_sh(Type type, const char * sh) {
-    ASSERT(type.class != TYPE_UNKNOWN);
+    assert(type.class != TYPE_UNKNOWN);
     char exsh = type_shorthands[type.class];
     if (*sh != exsh) return 0;
     if (is_type_primitive(type.class)) return 1;
@@ -473,7 +420,7 @@ static u32 match_type_sh(Type type, const char * sh) {
 
                 return i + 1;
             }
-        default: PANIC();
+        default: panic();
     }
 }
 
@@ -495,9 +442,9 @@ static bool match_param_types_sh(const char * sh, const Type * types, u32 count)
 }
 
 
-static bool is_builtin(const LStr name, u32 * out_index) {
-    for (u32 i = 0; i < ARRLEN(builtin_protos); i++)
-        if (lstr_str_eq(name, builtin_protos[i].name)) {
+static bool is_builtin(const slice_t name, u32 * out_index) {
+    for (u32 i = 0; i < arrlen(builtin_protos); i++)
+        if (slice_str_eq(name, builtin_protos[i].name)) {
             if (out_index) *out_index = i;
             return 1;
         }
@@ -517,10 +464,10 @@ static u32 get_builtin_class(u32 index, const Type * param_types, u32 param_coun
 }
 
 
-static Integer lstr_to_int(LStr str) {
+static Integer lstr_to_int(slice_t str) {
     char * end_ptr;
-    Integer ret = strtol(str.chars, &end_ptr, 10); 
-    ASSERT_EQ(end_ptr, str.chars + str.len);
+    Integer ret = strtol(str.sptr, &end_ptr, 10); 
+    assert_eq(end_ptr, str.eptr);
     return ret;
 }
 
@@ -531,7 +478,7 @@ static Integer lstr_to_int(LStr str) {
  */
 
 #define skip(token_ptr, token_class) do { \
-    ASSERT_EQ((token_ptr)->class, (token_class)); \
+    assert_eq((token_ptr)->class, (token_class)); \
     (token_ptr)++; \
 } while (0);
 
@@ -545,11 +492,11 @@ static Integer lstr_to_int(LStr str) {
 static Type parse_type(const Token ** tokens) {
     TypeClass class;
     if ((*tokens)->class == TK_IDENT)
-        class = lstr_to_type_class((*tokens)->val);
+        class = str_to_type_class((*tokens)->val);
     else class = TYPE_NONE;
 
     Type type = make_ptype(class);
-    ASSERT(is_type_primitive(class));
+    assert(is_type_primitive(class));
 
     if (class == TYPE_NONE) return type;
     (*tokens)++;
@@ -575,7 +522,7 @@ static void parse_call_params(
     Expr * params = aalloc(code_arena, expected_param_count * sizeof(Expr));
     u32 * offsets = aalloc(code_arena, expected_param_count * sizeof(u32));
 
-    ASSERT(delim_value(*tokens) > 0);
+    assert(delim_value(*tokens) > 0);
     TkClass close = opposite_delim((*tokens)->class);
     (*tokens)++;
 
@@ -639,15 +586,15 @@ static void parse_pseudo_list(
 }
 
 
-static bool find_name(LStr name, const Def * defs, u32 defs_len, u32 * out_index) {
+static bool find_name(slice_t name, const Def * defs, u32 defs_len, u32 * out_index) {
     for (*out_index = 0; *out_index < defs_len; (*out_index)++)
-        if (lstr_eq(defs[*out_index].name, name)) return true;
+        if (slice_eq(defs[*out_index].name, name)) return true;
     return false;
 }
 
 
 /* temporary hack warning: */
-static Def * get_def(LStr name, Context context) {
+static Def * get_def(slice_t name, Context context) {
     u32 var_index;
     if (find_name(name, context.globals->items, context.globals->len, &var_index))
         return &context.globals->items[var_index];
@@ -743,7 +690,7 @@ static void parse_if(
     if_token = *tokens;
     parse_expr(tokens, context, &if_expr, &if_type);
 
-    if ((*tokens)->class == TK_IDENT && lstr_str_eq((*tokens)->val, "else")) {
+    if ((*tokens)->class == TK_IDENT && slice_str_eq((*tokens)->val, "else")) {
         skip(*tokens, TK_IDENT);
         Expr else_expr;
         Type else_type;
@@ -787,11 +734,11 @@ static void parse_ident(
     const Token ** tokens, Context * context,
     Expr * out_expr, Type * out_ret_type
 ) {
-    LStr name = (*tokens)->val;
+    slice_t name = (*tokens)->val;
 
-    if (lstr_str_eq(name, "if"))
+    if (slice_str_eq(name, "if"))
         return parse_if(tokens, context, out_expr, out_ret_type);
-    if (lstr_str_eq(name, "while"))
+    if (slice_str_eq(name, "while"))
         return parse_while(tokens, context, out_expr, out_ret_type);
 
     { u32 index; if (is_builtin((*tokens)->val, &index))
@@ -839,7 +786,7 @@ static void parse_expr_assign(
         error(*tokens, "expected identifier");
 
     const Token * var_token = *tokens;
-    const LStr var_name = var_token->val;
+    const slice_t var_name = var_token->val;
 
     skip(*tokens, TK_IDENT);
 
@@ -1026,7 +973,7 @@ static void predef_parse_global_decl(const Token ** tokens, Context * context) {
         error(*tokens, "expected identifier");
 
     const Token * var_token = *tokens;
-    const LStr var_name = var_token->val;
+    const slice_t var_name = var_token->val;
 
     skip(*tokens, TK_IDENT);
 
@@ -1073,11 +1020,11 @@ static AST parse_tokens(const Token * tokens) {
 
     Def * main_def;
 
-    if (!(main_def = get_def(LSTR("main"), ctx)))
-        PANIC("no main function");
+    if (!(main_def = get_def(slice("main"), ctx)))
+        panic("no main function");
 
     if (main_def->type.class != TYPE_FUNCTION)
-        PANIC("main isn't a function");
+        panic("main isn't a function");
 
     ast.main_returns_exit_code = (get_ret_type(main_def->type)->class == TYPE_INT);
 

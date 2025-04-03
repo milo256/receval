@@ -43,7 +43,7 @@ typedef struct {
 static void eval_expr(Expr expr, Registers * regs, void * val);
 
 #define do_2op(type, op) do { \
-    ASSERT(param_count == 2); \
+    assert(param_count == 2); \
     type lhs, rhs; \
     eval_expr(params[0], regs, &lhs); \
     eval_expr(params[1], regs, &rhs); \
@@ -66,7 +66,7 @@ static inline void * get_var_ptr(Ident addr, void * gp, void * sp) {
     switch (var_location(addr)) {
         case GLOBAL: return gp + var_offset(addr);
         case LOCAL: return sp + var_offset(addr);
-        default: PANIC();
+        default: panic();
     }
 }
 
@@ -111,7 +111,7 @@ static inline void eval_builtin(OpBuiltin * builtin, Registers * regs, void * va
             }
             break; 
             
-        default:PANIC();
+        default:panic();
     }
 
 }
@@ -229,7 +229,7 @@ static void eval_expr(
             break;
         default:
             printf("%d\n", expr.class);
-            PANIC();
+            panic();
     }
 }
 
@@ -237,7 +237,7 @@ static void eval_expr(
 int eval_ast(AST ast, u32 stack_size) {
 
     void *stack = malloc(stack_size);
-    if (!stack) PANIC("failed to allocate stack");
+    if (!stack) panic("failed to allocate stack");
 
 
     Registers regs = {

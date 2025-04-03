@@ -73,18 +73,6 @@ typedef struct { Expr cond, if_expr, else_expr; } OpIfElse;
 typedef struct { Expr cond, while_expr; } OpWhile;
 typedef struct { Expr * exprs; u32 count; } OpSeq;
 
-#ifdef urmom
-/* It's... kind of an abstract syntax tree
- */
-typedef struct {
-    Arena arena;
-    void * globals;
-    Function * main_fn;
-    bool ignore_ret; /* main returns void or something else that's not int.
-                      * so, ignore it */
-} AST;
-#endif
-
 typedef struct {
     Arena arena;
     Expr * global_decls;
