@@ -135,66 +135,9 @@ static void skip_to_end(const Token ** token) {
 }
 
 
-static TypeClass str_to_type_class(slice_t str) {
-    for (u32 i = 0; i < arrlen(type_names); i++) {
-        if (!type_names[i]) continue;
-        if (slice_str_eq(str, type_names[i])) return i;
-    }
-    return TYPE_NONE;
-}
-
-
-
 /* Type Functions
  * -----------------------------------------------------------------------------
  */
-
-static bool is_type_primitive(TypeClass class) {
-    return (class < FIRST_COMPLEX_TYPE);
-}
-
-
-static u32 sizeof_type(int type_class) {
-    assert(type_class != TYPE_NONE);
-    assert(type_class != TYPE_UNKNOWN);
-    u32 size = type_sizes[type_class];
-    assert(size <= TYPE_MAX_SIZE);
-    return size;
-}
-
-
-static Type * get_ret_type(Type function) {
-    assert_eq(function.class, TYPE_FUNCTION);
-    return &((FunctionTypeData *) function.data)->ret_type;
-}
-
-
-static Type * get_param_types(Type function) {
-    assert_eq(function.class, TYPE_FUNCTION);
-    return (Type *) ((void *) function.data + sizeof(FunctionTypeData));
-}
-
-
-static u32 get_param_count(Type function) {
-    assert_eq(function.class, TYPE_FUNCTION);
-    return ((FunctionTypeData *) function.data)->param_count;
-}
-
-
-static bool is_type_incomplete(Type type) {
-    if (type.class == TYPE_UNKNOWN) return 1;
-    if (type.class == TYPE_FUNCTION) {
-        u32 param_count = get_param_count(type);
-        if (is_type_incomplete(*get_ret_type(type))) return 1;
-        for (u32 i = 0; i < param_count; i++)
-            if (is_type_incomplete(get_param_types(type)[i]))
-                return 1;
-        return 0;
-    }
-    assert(is_type_primitive(type.class));
-    return 0;
-}
-
 
 /* DANGEROUS: Allocates space for the parameter types, but the caller is
  * expected to add them.
@@ -215,7 +158,6 @@ static Type make_type_function(Type ret_type, u32 param_count) {
     };
 }
 
-#define ptype(c) ((Type) { .class = (c) })
 
 static Type make_ptype(TypeClass class) {
     assert(is_type_primitive(class));
@@ -401,44 +343,6 @@ static Type get_builtin_type(BuiltinClass class) {
     Type type = builtin_types[class];
     assert(type.class != TYPE_NONE);
     return type;
-}
-
-
-static u32 match_type_sh(Type type, const char * sh) {
-    assert(type.class != TYPE_UNKNOWN);
-    char exsh = type_shorthands[type.class];
-    if (*sh != exsh) return 0;
-    if (is_type_primitive(type.class)) return 1;
-
-    switch (type.class) {
-        case TYPE_FUNCTION:
-            {
-                u32 i, param_count = sh[1];
-                if (get_param_count(type) != param_count) return 0;
-                for (i = 0; i < param_count; i++)
-                    if (!match_type_sh(get_param_types(type)[i], sh + i + 1)) return 0;
-
-                return i + 1;
-            }
-        default: panic();
-    }
-}
-
-
-static bool match_param_types_sh(const char * sh, const Type * types, u32 count) {
-    const char * vtype = NULL;
-    for (u32 i = 0; i < count; i++) {
-        if (*sh == 'v') vtype = sh + 1;
-        u32 n;
-        if (vtype)
-            n = match_type_sh(types[i], vtype);
-        else {
-            n = match_type_sh(types[i], sh);
-            sh += n;
-        }
-        if (!n) return 0;
-    }
-    return (vtype) || *sh == 0;
 }
 
 

@@ -37,9 +37,6 @@ typedef enum {
 } TypeClass;
 
 
-static u32 type_sizes[] = { DEF_TYPES(TYPE_SIZE_TABLE) };
-static char * type_names[] = { DEF_TYPES(TYPE_NAME_TABLE) };
-static char type_shorthands[] = { DEF_TYPES(TYPE_SH_TABLE) };
 
 
 typedef struct Type {
@@ -54,3 +51,26 @@ typedef struct {
     /* and then args array is stored immediately after this in memory (trust) */
 }  FunctionTypeData;
 
+
+#define ptype(c) ((Type) { .class = (c) })
+
+
+bool is_type_primitive(TypeClass class);
+
+u32 sizeof_type(int type_class);
+
+Type * get_ret_type(Type function);
+
+Type * get_param_types(Type function);
+
+u32 get_param_count(Type function);
+
+bool is_type_incomplete(Type type);
+
+TypeClass str_to_type_class(slice_t str);
+
+void fmt_type(dslice_t * buf, Type type);
+
+u32 match_type_sh(Type type, const char * sh);
+
+bool match_param_types_sh(const char * sh, const Type * types, u32 count);

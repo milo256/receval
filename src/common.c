@@ -1,5 +1,6 @@
 #include "expr.h"
 #include "common.h"
+#include <stdarg.h>
 
 
 
@@ -7,6 +8,16 @@
  *------------------------------------------------------------------------------
  */
 
+int slice_cmp(slice_t a, slice_t b) {
+    u32 alen = slicelen(a), blen = slicelen(b);
+    u32 iters = min(alen, blen);
+    for (u32 i = 0; i < iters;i++)
+        if (a.sptr[i] != b.sptr[i])
+            return (a.sptr[i] > b.sptr[i]) - (a.sptr[i] < b.sptr[i]);
+    if (alen && !blen) return 1;
+    if (blen && !alen) return -1;
+    return 0;
+}
 
 bool slice_eq(slice_t a, slice_t b) {
     u32 alen = slicelen(a), blen = slicelen(b);
@@ -81,6 +92,105 @@ iterdef(i_codepoints, size_t, slice_t) (size_t * sidx, slice_t * item, slice_t s
 
     *sidx = sptr + len - str.sptr;
     return *item = (slice_t) { sptr, sptr + len }, true;
+}
+
+
+
+
+static bool exfmt_bsearch(formatter_t fmt, slice_t name, u32 * index) {
+    /* TODO: binary search */
+    for (*index = 0; *index < fmt.len; (*index)++) {
+        int cmp = slice_cmp(fmt.items[*index].name, name);
+        if (cmp == 0) return true;
+        if (cmp < 0) return false;
+    }
+    return false;
+}
+
+
+void exfmt_ex(formatter_t * fmt, slice_t name, exfmt_fn_t fn) {
+    for (u32 i = 0; i < slicelen(name); i++)
+        assert(name.sptr[i] != '}');
+    exfmt_t new = { name, fn };
+    da_next(*fmt);
+    u32 i;
+    assert(!exfmt_bsearch(*fmt, name, &i) /* name already exists */);
+    for (int j = fmt->len - 2; j >= (int) i; j++)
+        fmt->items[j + 1] = fmt->items[j];
+    fmt->items[i] = new;
+}
+
+
+
+void exfmt_vpda(formatter_t fmt, dslice_t * buf, char * fmtstr, va_list args) {
+    slice_t str = slice(fmtstr);
+    if (slicelen(str) < 2) {
+        da_append_str(*buf, fmtstr); 
+        return;
+    }
+
+    for (char * chptr = fmtstr; *chptr; chptr++) {
+        if (!slice_str_eq((slice_t) { chptr, chptr + 2 }, "${"))
+            da_append(*buf, *chptr);
+        else {
+            slice_t name = { chptr + 2, chptr + 4 };
+            while (*name.eptr && *name.eptr != '}')
+                name.eptr++;
+            assert(*name.eptr /* missing '}' */);
+            u32 i;
+            assert(exfmt_bsearch(fmt, name, &i) /* name doesn't exist */);
+            void * value = va_arg(args, void *);
+            fmt.items[i].fn(buf, value);
+            chptr = name.eptr;
+        }
+    }
+}
+
+
+void exfmt_pda(formatter_t fmt, dslice_t * buf, char * fmtstr, ...) {
+    va_list args;
+    va_start(args, fmtstr);
+    exfmt_vpda(fmt, buf, fmtstr, args);
+    va_end(args);
+}
+
+
+char * exfmt_vpds(formatter_t fmt, char * fmtstr, va_list args) {
+    dslice_t buf = {};
+    exfmt_vpda(fmt, &buf, fmtstr, args);
+    da_append(buf, 0);
+    return buf.items;
+}
+
+
+char * exfmt_pds(formatter_t fmt, char * fmtstr, ...) {
+    va_list args;
+    va_start(args, fmtstr);
+    char * ret = exfmt_vpds(fmt, fmtstr, args);
+    va_end(args);
+    return ret;
+}
+
+
+void exfmt_vp(formatter_t fmt, char * fmtstr, va_list args) {
+    char * str, * ch = exfmt_vpds(fmt, fmtstr, args);
+    str = ch;
+    for (; *ch; ch++)
+        putchar(*ch);
+    free(str);
+}
+
+
+void exfmt_p(formatter_t fmt, char * fmtstr, ...) {
+    va_list args;
+    va_start(args, fmtstr);
+    exfmt_vp(fmt, fmtstr, args);
+    va_end(args);
+}
+
+
+void exfmt_dealloc(formatter_t * fmt) {
+    da_dealloc(*fmt);
 }
 
 
