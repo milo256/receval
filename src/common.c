@@ -172,12 +172,25 @@ char * exfmt_pds(formatter_t fmt, char * fmtstr, ...) {
 }
 
 
-void exfmt_vp(formatter_t fmt, char * fmtstr, va_list args) {
+void exfmt_fvp(formatter_t fmt, FILE * stream, char * fmtstr, va_list args) {
     char * str, * ch = exfmt_vpds(fmt, fmtstr, args);
     str = ch;
     for (; *ch; ch++)
-        putchar(*ch);
+        putc(*ch, stream);
     free(str);
+}
+
+
+void exfmt_fp(formatter_t fmt, FILE * stream, char * fmtstr, ...) {
+    va_list args;
+    va_start(args, fmtstr);
+    exfmt_fvp(fmt, stream, fmtstr, args);
+    va_end(args);
+}
+
+
+void exfmt_vp(formatter_t fmt, char * fmtstr, va_list args) {
+    exfmt_fvp(fmt, stdout, fmtstr, args);
 }
 
 
@@ -218,6 +231,7 @@ Arena arena_init(void) {
     return ret;
 }
 
+
 void * aalloc(Arena * arena, u32 size) {
     void * ptr;
     if (arena->fill_ptr + size < arena->mem + ARENA_BLOCK_SIZE) {
@@ -232,6 +246,7 @@ void * aalloc(Arena * arena, u32 size) {
     arena->fill_ptr = ptr + size;
     return ptr;
 }
+
 
 static void arena_mem_free(void * arena_mem) {
     void * last = *(void **) arena_mem;

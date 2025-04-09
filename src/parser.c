@@ -59,11 +59,19 @@ static Arena * code_arena;
  * -----------------------------------------------------------------------------
  */
 
-static void error_internal(Token const * tk, char * msg) {
+formatter_t error_fmt = {};
+
+static void error_internal(Token const * tk, char * msg, ...) {
     fprintf(
-        stderr, "Receval: Error on %d:%d: %s\n",
-        tk->dbug_line, tk->dbug_column, msg
+        stderr, "Receval: Error on %d:%d: ",
+        tk->dbug_line, tk->dbug_column
     );
+    va_list args;
+    va_start(args, msg);
+    exfmt_fvp(error_fmt, stdout, msg, args);
+    putchar('\n');
+    va_end(args);
+
     char * at = tk->val.sptr;
     char * line_start = at - tk->dbug_column + 1;
     char * line_end = strchr(at, '\n');
@@ -77,8 +85,7 @@ static void error_internal(Token const * tk, char * msg) {
     u32 len = str_end - str_start;
     u32 error_pos = at - str_start;
     u32 error_len = max(1, min(slicelen(tk->val), (size_t) (str_end - at)));
-    strncpy(buf, str_start, len);
-
+    memcpy(buf, str_start, len);
     buf[len] = '\0';
 
     u32 margin_width = fprintf(stderr, " %d |", tk->dbug_line);
@@ -94,9 +101,9 @@ static void error_internal(Token const * tk, char * msg) {
 #ifdef NDEBUG
 #define error(tk, msg) error_internal(tk, msg)
 #else
-#define error(tk, msg) do {\
+#define error(tk, msg, ...) do {\
     fprintf(stderr, "DEBUG: error emitted on %s:%d\n", __FILE__, __LINE__); \
-    error_internal(tk, msg); \
+    error_internal(tk, msg __VA_OPT__(,) __VA_ARGS__); \
 } while (0)
 
 #endif
@@ -357,7 +364,9 @@ static bool is_builtin(const slice_t name, u32 * out_index) {
 }
 
 
-static u32 get_builtin_class(u32 index, const Type * param_types, u32 param_count) {
+static u32 get_builtin_class(
+    u32 index, const Type * param_types, u32 param_count
+) {
     const BuiltinProto * proto = &builtin_protos[index];
     char * type_sh;
     for (u32 i = 0; (type_sh = proto->variants[i].params_sh); i++)
@@ -440,8 +449,12 @@ static void parse_call_params(
         Type param_type;
         const Token * param_token = *tokens;
         parse_expr(tokens, context, &params[count], &param_type);
-        if (!type_eq(&param_type, &expected_param_types[count]))
-            error(param_token, "mismatched parameter types");
+        if (!type_eq(&param_type, &expected_param_types[count])) {
+            error(param_token,
+                "mismatched parameter types: expected ${type}, got ${type}",
+                &expected_param_types[count], &param_type
+            );
+        }
         offsets[count] = offs;
         offs += sizeof_type(param_type.class);
     }
@@ -712,7 +725,10 @@ static void parse_expr_assign(
             var_def->type = val_type;
 
         if (!type_eq(&var_type, &val_type))
-            error(var_token, "mismatched types");
+            error(var_token,
+                "mismatched value type: expected ${type}, got ${type}",
+                &var_type, &val_type
+            );
     } else {
         if (is_builtin(var_name, NULL))
             error(var_token, "not a valid identifier");
@@ -939,6 +955,8 @@ static AST parse_tokens(const Token * tokens) {
     return ast;
 }
 
+
+
 /* API Functions
  * -----------------------------------------------------------------------------
  */
@@ -949,6 +967,8 @@ void free_code(AST ast) { afree(ast.arena); }
 AST parse_code(const char * code) {
     parser_arena = malloc(sizeof(Arena));
     *parser_arena = arena_init();
+
+    exfmt_ex(&error_fmt, slice("type"), fmt_type_vp);
 
     const Token * tokens = tokenize(code, parser_arena);
     AST ast = parse_tokens(tokens);

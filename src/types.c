@@ -82,6 +82,11 @@ void fmt_type(dslice_t * buf, Type type) {
 }
 
 
+void fmt_type_vp(dslice_t * buf, void * type) {
+    fmt_type(buf, *(Type *)type);
+}
+
+
 u32 match_type_sh(Type type, const char * sh) {
     assert(type.class != TYPE_UNKNOWN);
     char exsh = type_shorthands[type.class];

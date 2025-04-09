@@ -71,6 +71,8 @@ TypeClass str_to_type_class(slice_t str);
 
 void fmt_type(dslice_t * buf, Type type);
 
+void fmt_type_vp(dslice_t * buf, void * type);
+
 u32 match_type_sh(Type type, const char * sh);
 
 bool match_param_types_sh(const char * sh, const Type * types, u32 count);

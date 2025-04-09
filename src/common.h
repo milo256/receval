@@ -232,5 +232,7 @@ void exfmt_vpda(formatter_t fmt, dslice_t * buf, char * fmtstr, va_list args);
 void exfmt_pda(formatter_t fmt, dslice_t * buf, char * fmtstr, ...);
 char * exfmt_vpds(formatter_t fmt, char * fmtstr, va_list args);
 char * exfmt_pds(formatter_t fmt, char * fmtstr, ...);
+void exfmt_fvp(formatter_t fmt, FILE * stream, char * fmtstr, va_list args);
+void exfmt_fp(formatter_t fmt, FILE * stream, char * fmtstr, ...);
 void exfmt_vp(formatter_t fmt, char * fmtstr, va_list args);
 void exfmt_p(formatter_t fmt, char * fmtstr, ...);
