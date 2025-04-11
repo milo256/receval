@@ -35,8 +35,8 @@ typedef int64_t i64;
 #define arrlen(A) (sizeof(A)/sizeof(A[0]))
 
 #ifdef NDEBUG
-#define ASSERT(A) ((void) 0)
-#define ASSERT_EQ(A, B) ((void) 0)
+#define assert(A) ((void) (A))
+#define assert_eq(A, B) (((void) (A)), ((void) (B)))
 #else
 
 #define assert_eq(A, B) if ((A) != (B)) { \
@@ -205,6 +205,8 @@ bool slice_str_eq(slice_t a, char * b);
 iterdef(i_split, size_t, slice_t) (size_t * sidx, slice_t * item, slice_t str, char sep);
 
 iterdef(i_codepoints, size_t, slice_t) (size_t * sidx, slice_t * item, slice_t str);
+
+u32 utf8len(slice_t str);
 
 
 

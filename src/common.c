@@ -95,6 +95,11 @@ iterdef(i_codepoints, size_t, slice_t) (size_t * sidx, slice_t * item, slice_t s
 }
 
 
+u32 utf8len(slice_t str) {
+    u32 ret = 0;
+    iterate(ch, i_codepoints, str) ret++;
+    return ret;
+}
 
 
 static bool exfmt_bsearch(formatter_t fmt, slice_t name, u32 * index) {

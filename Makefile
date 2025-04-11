@@ -6,7 +6,7 @@ APPNAME := receval
 CFLAGS := -std=c99 -Wall -Wextra -Wno-missing-braces
 LDFLAGS :=
 DEBUGFLAGS := -g -O0
-RELEASEFLAGS := -g -O0
+RELEASEFLAGS := -g -O0 -D NDEBUG
 
 
 OBJDIR := obj

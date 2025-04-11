@@ -59,53 +59,112 @@ static Arena * code_arena;
  * -----------------------------------------------------------------------------
  */
 
-formatter_t error_fmt = {};
+static struct {
+    formatter_t fmt;
+    const char * code_text;
+} dbg = {};
 
-static void error_internal(Token const * tk, char * msg, ...) {
-    fprintf(
-        stderr, "Receval: Error on %d:%d: ",
-        tk->dbug_line, tk->dbug_column
-    );
-    va_list args;
-    va_start(args, msg);
-    exfmt_fvp(error_fmt, stdout, msg, args);
-    putchar('\n');
-    va_end(args);
 
-    char * at = tk->val.sptr;
-    char * line_start = at - tk->dbug_column + 1;
-    char * line_end = strchr(at, '\n');
+typedef struct {
+    u32 line;
+    u32 col;
+} TextPos;
 
-    char * str_start = max(line_start, line_end - MAX_COLS);
-    if ((at - 4) < str_start)
-        str_start = max(at - 4, line_start);
-    char * str_end = min(line_start + MAX_COLS, line_end);
 
-    char buf[MAX_COLS + 1];
-    u32 len = str_end - str_start;
-    u32 error_pos = at - str_start;
-    u32 error_len = max(1, min(slicelen(tk->val), (size_t) (str_end - at)));
-    memcpy(buf, str_start, len);
-    buf[len] = '\0';
-
-    u32 margin_width = fprintf(stderr, " %d |", tk->dbug_line);
-    fprintf(stderr, "%s\n", buf);
-    for (u32 i = 0; i < error_pos + margin_width; i++)
-        putchar(' ');
-    for (u32 i = 0; i < error_len; i++)
-        putchar('^');
-    putchar('\n');
-    exit(1);
+static TextPos get_position(const char * ptr, const char * in) {
+    TextPos ret = { 1, 1 };
+    for (const char * ch = in; *ch; ch++) {
+        if (ch == ptr) return ret;
+        if (*ch == '\n') ret.col = 1, ret.line++;
+        else ret.col++;
+    }
+    panic("not found");
+    return (TextPos) {};
 }
 
-#ifdef NDEBUG
-#define error(tk, msg) error_internal(tk, msg)
-#else
-#define error(tk, msg, ...) do {\
-    fprintf(stderr, "DEBUG: error emitted on %s:%d\n", __FILE__, __LINE__); \
-    error_internal(tk, msg __VA_OPT__(,) __VA_ARGS__); \
-} while (0)
 
+static TextPos print_error_pos(const Token * tk) {
+    assert(tk->class != TK_EOF);
+    slice_t problem = tk->val;
+    TextPos pos = get_position(problem.sptr, dbg.code_text);
+    fprintf(stderr, "Error on %d:%d - ", pos.line, pos.col);
+    return pos;
+}
+
+
+static void print_error_msg(char * msg, ...) {
+    va_list args;
+    va_start(args, msg);
+    exfmt_fvp(dbg.fmt, stderr, msg, args);
+    putc('\n', stderr);
+    va_end(args);
+}
+
+
+static void print_error_context(TextPos pos, slice_t problem) {
+    slice_t line = { problem.sptr - pos.col + 1, problem.sptr };
+    for (;*line.eptr && *line.eptr != '\n'; line.eptr++);
+
+    slice_t line_view = line;
+    for (;*line_view.sptr == ' ' || *line_view.sptr == '\t'; line_view.sptr++);
+
+    u32 margin = fprintf(stderr, " %d |", pos.line);
+    for (char * ch = line_view.sptr; ch < line_view.eptr; ch++)
+        putc(*ch, stderr);
+    putc('\n', stderr);
+   
+
+
+    u32 underline_pos = 0;
+    bool found = 0;
+
+    iterate(ch, i_codepoints, line_view) {
+        if (ch.sptr == problem.sptr) { found = 1; break; }
+        else (underline_pos++);
+    }
+
+    assert(found);
+
+    for (u32 i = 1; i < margin; i++) putc(' ', stderr);
+    putc('|', stderr);
+    for (u32 i = 0; i < underline_pos; i++) putc(' ', stderr);
+    putc('^', stderr);
+    for (u32 i = 1; i < utf8len(problem); i++) putc('~', stderr);
+    putc('\n', stderr);
+}
+
+
+static void error_add_note(const Token * tk, char * msg, ...) {
+    fprintf(stderr, "NOTE - ");
+    va_list args;
+    va_start(args, msg);
+    exfmt_fvp(dbg.fmt, stderr, msg, args);
+    putc('\n', stderr);
+    va_end(args);
+
+    slice_t problem = tk->val;
+    TextPos pos = get_position(problem.sptr, dbg.code_text);
+
+    print_error_context(pos, problem);
+}
+
+
+#ifdef NDEBUG
+#define error(tk, msg, ...) \
+    for (TextPos m__error_pos = print_error_pos(tk); \
+        print_error_msg((msg) __VA_OPT__(,) __VA_ARGS__), \
+        print_error_context(m__error_pos, (tk)->val), 1; \
+        exit(1) \
+    )
+#else
+#define error(tk, msg, ...) \
+    for (TextPos m__error_pos = (fprintf( \
+            stderr, "DEBUG: error emitted on %s:%d\n", __FILE__, __LINE__ \
+        ), print_error_pos(tk)); \
+        print_error_msg((msg) __VA_OPT__(,) __VA_ARGS__), \
+        print_error_context(m__error_pos, (tk)->val), 1; \
+        exit(1) \
+    )
 #endif
 
 
@@ -396,7 +455,7 @@ static Integer lstr_to_int(slice_t str) {
 } while (0);
 
 #define skip_expect(token_ptr, token_class, ...) \
-    if ((token_ptr)++->class != (token_class)) error((token_ptr), __VA_ARGS__)
+    if ((token_ptr)++->class != (token_class)) error((token_ptr - 1), __VA_ARGS__)
 
 
 /* parses a type and moves to first token after the type. if there is no type,
@@ -532,6 +591,11 @@ static void parse_expr_builtin(
     Type * param_types;
     Expr * params;
     u32 param_count;
+    if ((*tokens)->class != TK_OPEN) {
+        error(params_start, "expected opening parenthesis") {
+            error_add_note(*tokens - 1, "following use of builtin here");
+        }
+    }
     parse_pseudo_list(
         tokens, context, TK_OPEN, &params, &param_types, &param_count
     );
@@ -968,7 +1032,8 @@ AST parse_code(const char * code) {
     parser_arena = malloc(sizeof(Arena));
     *parser_arena = arena_init();
 
-    exfmt_ex(&error_fmt, slice("type"), fmt_type_vp);
+    dbg.code_text = code;
+    exfmt_ex(&dbg.fmt, slice("type"), fmt_type_vp);
 
     const Token * tokens = tokenize(code, parser_arena);
     AST ast = parse_tokens(tokens);
